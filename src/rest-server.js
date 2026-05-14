@@ -23,11 +23,14 @@ import {
 import {
 	getHealth,
 	listAtRiskBorrowers,
+	listBorrowers,
 	recentLiquidations,
 	getBorrower,
 	getBorrowerHistory,
-	getBuilderLeaderboard
+	getBuilderLeaderboard,
+	getStatsOverview
 } from './queries.js';
+import { filterProviders, FLASHLOAN_PROVIDERS } from './flashloan-providers.js';
 
 // `buildApp` is exported separately so tests can spin up a Fastify
 // instance against a fixture DB without touching the live one.
@@ -77,13 +80,17 @@ export async function buildApp(options = {}) {
 		service: config.serviceName,
 		version: apiVersion,
 		docs: 'https://docs.seneschal.space',
+		stats_dashboard: 'https://stats.seneschal.space',
 		endpoints: [
 			'GET /v1/health',
 			'GET /v1/liquidations/atrisk',
 			'GET /v1/liquidations/recent',
+			'GET /v1/borrowers',
 			'GET /v1/borrowers/:address',
 			'GET /v1/borrowers/:address/history',
-			'GET /v1/builders/leaderboard'
+			'GET /v1/builders/leaderboard',
+			'GET /v1/stats/overview',
+			'GET /v1/flashloan/providers'
 		]
 	}));
 
@@ -116,6 +123,24 @@ export async function buildApp(options = {}) {
 		});
 	});
 
+	// Generic borrower listing — discovery endpoint with HF range,
+	// debt range, sort, and offset pagination. Distinct from
+	// /v1/liquidations/atrisk which is the convenience-shaped subset.
+	app.get('/v1/borrowers', async (req) => {
+		const q = req.query ?? {};
+		return listBorrowers(db, {
+			protocol: q.protocol,
+			min_hf: q.min_hf,
+			max_hf: q.max_hf,
+			min_debt_usd: q.min_debt_usd,
+			max_debt_usd: q.max_debt_usd,
+			sort_by: q.sort_by,
+			sort_dir: q.sort_dir,
+			limit: q.limit,
+			offset: q.offset
+		});
+	});
+
 	app.get('/v1/borrowers/:address', async (req) => {
 		return getBorrower(db, {
 			address: req.params.address,
@@ -143,6 +168,43 @@ export async function buildApp(options = {}) {
 			_shadowPath: shadowPath,
 			_ttlMs: ttlMs
 		});
+	});
+
+	// Single bundled endpoint feeding stats.seneschal.space. Returns
+	// all the aggregates the dashboard needs in one round trip so the
+	// page renders fast even on slow connections. Cached implicitly
+	// via the leaderboard sub-call (60s TTL); the other aggregates
+	// take ~50ms.
+	app.get('/v1/stats/overview', async () => {
+		return await getStatsOverview(db, {
+			_shadowPath: shadowPath,
+			_sparkPath: sparkPath,
+			_ttlMs: ttlMs
+		});
+	});
+
+	// Curated mainnet flash-loan provider catalogue. Pure static data,
+	// no DB hit. Helps MEV agents discover providers when planning a
+	// liquidation strategy. Query params filter the catalogue:
+	//   ?max_fee_bps=10   ?multi_asset=true   ?chain=ethereum
+	app.get('/v1/flashloan/providers', async (req) => {
+		const q = req.query ?? {};
+		const filtered = filterProviders({
+			chain: q.chain ?? 'ethereum',
+			maxFeeBps: q.max_fee_bps != null ? Number(q.max_fee_bps) : null,
+			multiAsset: q.multi_asset === 'true' ? true : null
+		});
+		return {
+			providers: filtered,
+			total: filtered.length,
+			catalogue_size: FLASHLOAN_PROVIDERS.length,
+			filters: {
+				chain: q.chain ?? 'ethereum',
+				max_fee_bps: q.max_fee_bps != null ? Number(q.max_fee_bps) : null,
+				multi_asset: q.multi_asset === 'true' ? true : null
+			},
+			note: 'Static catalogue. Caller must verify live liquidity per provider before relying on a specific amount.'
+		};
 	});
 
 	app.setNotFoundHandler((req, reply) => {

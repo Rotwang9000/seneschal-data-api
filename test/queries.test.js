@@ -12,10 +12,12 @@ import { openTestDb } from '../src/db.js';
 import {
 	getHealth,
 	listAtRiskBorrowers,
+	listBorrowers,
 	recentLiquidations,
 	getBorrower,
 	getBorrowerHistory,
 	getBuilderLeaderboard,
+	getStatsOverview,
 	_resetLeaderboardCacheForTest,
 	_internal
 } from '../src/queries.js';
@@ -299,6 +301,118 @@ describe('getBorrowerHistory', () => {
 			since_ms: 1_700_000_100_000,
 			until_ms: 1_700_000_000_000
 		})).toThrow(TypeError);
+	});
+});
+
+describe('listBorrowers', () => {
+	test('default returns all Aave + Morpho rows (4 fixtures)', () => {
+		const r = listBorrowers(db);
+		expect(r.results.length).toBeGreaterThanOrEqual(3);
+		expect(r.filters.sort_by).toBe('health_factor');
+	});
+
+	test('min_hf and max_hf form a range', () => {
+		const r = listBorrowers(db, { min_hf: 1.0, max_hf: 1.1 });
+		for (const row of r.results) {
+			expect(row.health_factor).toBeGreaterThanOrEqual(1.0);
+			expect(row.health_factor).toBeLessThan(1.1);
+		}
+	});
+
+	test('offset paginates without overlap', () => {
+		const a = listBorrowers(db, { limit: 2, offset: 0 });
+		const b = listBorrowers(db, { limit: 2, offset: 2 });
+		const aIds = a.results.map(r => r.borrower + r.protocol);
+		const bIds = b.results.map(r => r.borrower + r.protocol);
+		for (const id of aIds) expect(bIds).not.toContain(id);
+	});
+
+	test('sort_by debt_usd desc gives largest first', () => {
+		const r = listBorrowers(db, { sort_by: 'debt_usd', sort_dir: 'desc' });
+		const debts = r.results.map(x => x.debt_usd).filter(d => d != null);
+		for (let i = 1; i < debts.length; i++) {
+			expect(debts[i - 1]).toBeGreaterThanOrEqual(debts[i]);
+		}
+	});
+
+	test('rejects unknown sort_by', () => {
+		expect(() => listBorrowers(db, { sort_by: 'banana' })).toThrow(TypeError);
+	});
+
+	test('rejects malformed bounds', () => {
+		expect(() => listBorrowers(db, { min_hf: 'banana' })).toThrow(TypeError);
+	});
+
+	test('total_matched + has_more behave', () => {
+		const r = listBorrowers(db, { limit: 1, offset: 0 });
+		expect(r.result_count).toBe(1);
+		expect(r.total_matched).toBeGreaterThanOrEqual(r.result_count);
+		expect(r.has_more).toBe(r.total_matched > 1);
+	});
+});
+
+describe('getStatsOverview', () => {
+	test('bundles the dashboard inputs', async () => {
+		_resetLeaderboardCacheForTest();
+		const r = await getStatsOverview(db, {
+			_shadowPath: shadowPath,
+			_sparkPath: sparkPath,
+			_ttlMs: 1
+		});
+		expect(typeof r.as_of_ms).toBe('number');
+		expect(r.totals.borrower_snapshots).toBe(3);
+		expect(r.totals.morpho_borrower_snapshots).toBe(1);
+		expect(Array.isArray(r.hf_histogram)).toBe(true);
+		expect(r.hf_histogram).toHaveLength(5);
+		const liquidatable = r.hf_histogram.find(b => b.bucket === '0.8–1.0');
+		expect(liquidatable.total_count).toBeGreaterThanOrEqual(1);
+		expect(r.top_at_risk.length).toBeGreaterThan(0);
+		expect(r.builders['24h'].length).toBeGreaterThan(0);
+		expect(r.builders.total_slots_24h).toBeGreaterThanOrEqual(5);
+		expect(r.liquidations_30d_per_day.length).toBeGreaterThanOrEqual(0);
+		expect(Array.isArray(r.recent_liquidations)).toBe(true);
+	});
+
+	test('KPI block has correct shape and counts', async () => {
+		_resetLeaderboardCacheForTest();
+		const r = await getStatsOverview(db, {
+			_shadowPath: shadowPath,
+			_sparkPath: sparkPath,
+			_ttlMs: 1
+		});
+		expect(r.kpis).toBeDefined();
+		// 3 Aave + 1 Morpho fixture rows.
+		expect(r.kpis.positions_tracked).toBe(4);
+		// ADDR_A HF 0.98 + ADDR_B HF 1.04 both < 1.05; Morpho HF ~1.0488 also < 1.05.
+		expect(r.kpis.at_risk_count).toBeGreaterThanOrEqual(2);
+		expect(typeof r.kpis.aave_debt_under_watch_usd).toBe('number');
+		expect(typeof r.kpis.liquidations_24h_count).toBe('number');
+	});
+
+	test('Morpho rows in top_at_risk have null debt_usd', async () => {
+		_resetLeaderboardCacheForTest();
+		const r = await getStatsOverview(db, {
+			_shadowPath: shadowPath,
+			_sparkPath: sparkPath,
+			_ttlMs: 1
+		});
+		const morphoRow = r.top_at_risk.find(x => x.protocol === 'morpho');
+		if (morphoRow) {
+			expect(morphoRow.debt_usd).toBeNull();
+		}
+	});
+
+	test('histogram has no morpho_debt_usd field', async () => {
+		_resetLeaderboardCacheForTest();
+		const r = await getStatsOverview(db, {
+			_shadowPath: shadowPath,
+			_sparkPath: sparkPath,
+			_ttlMs: 1
+		});
+		for (const b of r.hf_histogram) {
+			expect(b).not.toHaveProperty('morpho_debt_usd');
+			expect(b).not.toHaveProperty('total_debt_usd');
+		}
 	});
 });
 

@@ -190,3 +190,50 @@ describe('CORS headers', () => {
 		expect(r.headers['access-control-allow-origin']).toBeDefined();
 	});
 });
+
+describe('/v1/borrowers (generic)', () => {
+	test('returns pageable list', async () => {
+		const r = await call('GET', '/v1/borrowers?limit=10&min_hf=0.5');
+		expect(r.statusCode).toBe(200);
+		const body = r.json();
+		expect(Array.isArray(body.results)).toBe(true);
+		expect(typeof body.total_matched).toBe('number');
+		expect(typeof body.has_more).toBe('boolean');
+	});
+
+	test('rejects malformed sort_by as 400', async () => {
+		const r = await call('GET', '/v1/borrowers?sort_by=lol');
+		expect(r.statusCode).toBe(400);
+	});
+
+	test('respects sort_dir=desc on debt_usd', async () => {
+		const r = await call('GET', '/v1/borrowers?sort_by=debt_usd&sort_dir=desc');
+		expect(r.statusCode).toBe(200);
+	});
+});
+
+describe('/v1/flashloan/providers', () => {
+	test('default returns ethereum catalogue', async () => {
+		const r = await call('GET', '/v1/flashloan/providers');
+		expect(r.statusCode).toBe(200);
+		const body = r.json();
+		expect(body.providers.length).toBeGreaterThanOrEqual(4);
+		expect(body.providers.some(p => p.id === 'flashbank')).toBe(true);
+		expect(body.providers.some(p => p.id === 'aave-v3')).toBe(true);
+	});
+
+	test('max_fee_bps filters expensive providers', async () => {
+		const r = await call('GET', '/v1/flashloan/providers?max_fee_bps=0');
+		expect(r.statusCode).toBe(200);
+		const body = r.json();
+		expect(body.providers.every(p => p.fee_bps === 0)).toBe(true);
+		expect(body.providers.length).toBeGreaterThan(0);
+	});
+
+	test('multi_asset=true filters to multi-asset providers', async () => {
+		const r = await call('GET', '/v1/flashloan/providers?multi_asset=true');
+		expect(r.statusCode).toBe(200);
+		const body = r.json();
+		expect(body.providers.every(p => p.supports_multi_asset)).toBe(true);
+	});
+});

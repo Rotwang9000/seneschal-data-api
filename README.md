@@ -15,6 +15,7 @@ market share data from the operator's own slot-by-slot shadow recorder.
 | REST API                      | `https://api.seneschal.space`    | None     |
 | MCP (Streamable HTTP)         | `https://mcp.seneschal.space`    | None     |
 | Docs                          | `https://docs.seneschal.space`   | -        |
+| Live stats dashboard          | `https://stats.seneschal.space`  | -        |
 
 Rate limit: 120 requests/min/IP at the REST host. The MCP host pipelines
 requests over a single transport so the same limit applies per session.
@@ -41,16 +42,19 @@ Add this to your MCP client config (e.g. `~/.cursor/mcp.json`):
 }
 ```
 
-Six tools become available to your agent:
+Nine tools become available to your agent:
 
 | Tool                                 | Purpose                                                              |
 |--------------------------------------|----------------------------------------------------------------------|
 | `seneschal_health`                   | Liveness + data freshness                                            |
 | `seneschal_list_at_risk_borrowers`   | Find liquidatable positions across all DeFi                          |
+| `seneschal_list_borrowers`           | Generic discovery / pagination over the full borrower set            |
 | `seneschal_recent_liquidations`      | Recent on-chain liquidations (won by other liquidators or ourselves) |
 | `seneschal_get_borrower`             | Latest state of one borrower across protocols                        |
 | `seneschal_get_borrower_history`     | Time-series health-factor traces                                     |
 | `seneschal_builder_leaderboard`      | Ethereum builder market share (24h, 7d, 30d, all-time)               |
+| `seneschal_stats_overview`           | Aggregate snapshot powering the public dashboard                     |
+| `seneschal_flashloan_providers`      | Curated catalogue of mainnet flash-loan providers                    |
 
 ## REST endpoints
 
@@ -59,9 +63,12 @@ Six tools become available to your agent:
 | `GET`  | `/v1/health`                          | Liveness + freshness probe                                     |
 | `GET`  | `/v1/liquidations/atrisk`             | `?protocol&max_hf&min_debt_usd&limit`                          |
 | `GET`  | `/v1/liquidations/recent`             | `?since_ms&protocol&limit`                                     |
+| `GET`  | `/v1/borrowers`                       | `?protocol&min_hf&max_hf&min_debt_usd&max_debt_usd&sort_by&sort_dir&limit&offset` |
 | `GET`  | `/v1/borrowers/:address`              | Cross-protocol borrower snapshot                               |
 | `GET`  | `/v1/borrowers/:address/history`      | `?protocol=aave|morpho&since_ms&until_ms&granularity&limit`    |
 | `GET`  | `/v1/builders/leaderboard`            | `?window=24h|7d|30d|all&limit`                                 |
+| `GET`  | `/v1/stats/overview`                  | Aggregate snapshot for dashboards                              |
+| `GET`  | `/v1/flashloan/providers`             | `?chain&max_fee_bps&multi_asset`                               |
 
 Full details, parameter tables, and worked examples at
 [`https://docs.seneschal.space`](https://docs.seneschal.space).
@@ -94,6 +101,16 @@ SENESCHAL_SHADOW_BLOCKS=/path/to/shadow-blocks.jsonl \
   node bin/rest.mjs
 # in another shell:
 curl http://127.0.0.1:8810/v1/health
+```
+
+## Docker
+
+A `Dockerfile` is provided for self-hosting the MCP server:
+
+```bash
+docker build -t seneschal-data-api .
+docker run -p 8811:8811 -v /path/to/your-data:/data seneschal-data-api
+# point your MCP client at http://localhost:8811/
 ```
 
 The data sources are SQLite + JSONL files written by the Seneschal bot.

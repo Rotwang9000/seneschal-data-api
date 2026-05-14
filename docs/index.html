@@ -55,6 +55,9 @@ data from our own shadow recorder.
 <strong>No signup. No API key. No rate limit beyond DoS protection
 (120 req/min/IP).</strong>
 Submit bugs and feature requests to <code>Rotwang9000</code> on Discord.
+&mdash; or open the
+<a href="https://stats.seneschal.space"><strong>live stats dashboard</strong></a>
+to see the data without writing a single line.
 </div>
 
 <h2>Why this exists</h2>
@@ -91,12 +94,15 @@ Add this to your MCP client config (e.g. <code>~/.cursor/mcp.json</code>):
   }
 }</code></pre>
 <p>
-Six tools become available to your agent: <code>seneschal_health</code>,
+Nine tools become available to your agent: <code>seneschal_health</code>,
 <code>seneschal_list_at_risk_borrowers</code>,
+<code>seneschal_list_borrowers</code>,
 <code>seneschal_recent_liquidations</code>,
 <code>seneschal_get_borrower</code>,
 <code>seneschal_get_borrower_history</code>,
-<code>seneschal_builder_leaderboard</code>.
+<code>seneschal_builder_leaderboard</code>,
+<code>seneschal_stats_overview</code>,
+<code>seneschal_flashloan_providers</code>.
 </p>
 
 <h2>REST endpoints</h2>
@@ -130,6 +136,25 @@ Six tools become available to your agent: <code>seneschal_health</code>,
 </div>
 
 <div class="endpoint">
+<span class="method get">GET</span><code>/v1/borrowers</code>
+<p>Discovery endpoint: list borrowers from Aave / Morpho without
+knowing addresses in advance. Supports HF range, debt range, sort
+field/direction and offset pagination.</p>
+<table>
+<tr><th>Query param</th><th>Type</th><th>Default</th><th>Notes</th></tr>
+<tr><td><code>protocol</code></td><td>enum</td><td>(all)</td><td><code>aave</code>, <code>morpho</code>, <code>compound</code></td></tr>
+<tr><td><code>min_hf</code></td><td>number</td><td>(none)</td><td>Inclusive lower bound.</td></tr>
+<tr><td><code>max_hf</code></td><td>number</td><td>(none)</td><td>Exclusive upper bound.</td></tr>
+<tr><td><code>min_debt_usd</code></td><td>number</td><td>0</td></tr>
+<tr><td><code>max_debt_usd</code></td><td>number</td><td>(none)</td></tr>
+<tr><td><code>sort_by</code></td><td>enum</td><td>health_factor</td><td><code>health_factor</code>, <code>debt_usd</code>, <code>collateral_usd</code>, <code>last_observed_ms</code></td></tr>
+<tr><td><code>sort_dir</code></td><td>enum</td><td>asc</td><td><code>asc</code> or <code>desc</code></td></tr>
+<tr><td><code>limit</code></td><td>1..500</td><td>50</td></tr>
+<tr><td><code>offset</code></td><td>integer</td><td>0</td><td>For pagination.</td></tr>
+</table>
+</div>
+
+<div class="endpoint">
 <span class="method get">GET</span><code>/v1/borrowers/:address</code>
 <p>Combined snapshot for one borrower across every protocol where we have data.</p>
 </div>
@@ -154,6 +179,30 @@ Six tools become available to your agent: <code>seneschal_health</code>,
 <tr><th>Query param</th><th>Type</th><th>Default</th><th>Notes</th></tr>
 <tr><td><code>window</code></td><td>enum</td><td>24h</td><td><code>24h</code>, <code>7d</code>, <code>30d</code>, <code>all</code></td></tr>
 <tr><td><code>limit</code></td><td>1..500</td><td>20</td><td>Top-N builders to return.</td></tr>
+</table>
+</div>
+
+<div class="endpoint">
+<span class="method get">GET</span><code>/v1/stats/overview</code>
+<p>Single bundled endpoint feeding the
+<a href="https://stats.seneschal.space">public stats dashboard</a>:
+totals, health-factor histogram, top-10 at-risk, 30-day liquidation
+counts, builder share for 24h/7d/30d, and recent liquidations &mdash;
+all in one call so the dashboard renders in one round trip.</p>
+</div>
+
+<div class="endpoint">
+<span class="method get">GET</span><code>/v1/flashloan/providers</code>
+<p>Curated catalogue of Ethereum mainnet flash-loan providers
+(Aave V3, Balancer V2, Morpho Blue, Uniswap V3, FlashBank) with
+current fee in basis points, contract addresses, qualitative
+liquidity notes, and per-provider caveats. Helpful for searchers
+picking the cheapest viable provider for a liquidation.</p>
+<table>
+<tr><th>Query param</th><th>Type</th><th>Default</th><th>Notes</th></tr>
+<tr><td><code>chain</code></td><td>string</td><td>ethereum</td><td>Only ethereum is catalogued today.</td></tr>
+<tr><td><code>max_fee_bps</code></td><td>number</td><td>(none)</td><td>Drop providers whose flat fee exceeds this (1bp = 0.01%).</td></tr>
+<tr><td><code>multi_asset</code></td><td>bool</td><td>(any)</td><td>If <code>true</code>, only return providers that support borrowing multiple assets in one flash loan.</td></tr>
 </table>
 </div>
 
@@ -182,10 +231,13 @@ same parameters and same response shape (just wrapped as MCP tool content).
 <tr><th>Tool</th><th>Use</th></tr>
 <tr><td><code>seneschal_health</code></td><td>Liveness + freshness probe.</td></tr>
 <tr><td><code>seneschal_list_at_risk_borrowers</code></td><td>Find liquidatable positions across all DeFi.</td></tr>
+<tr><td><code>seneschal_list_borrowers</code></td><td>Discovery / pagination over the full borrower set with HF + debt range filters.</td></tr>
 <tr><td><code>seneschal_recent_liquidations</code></td><td>Recent on-chain liquidation events.</td></tr>
 <tr><td><code>seneschal_get_borrower</code></td><td>Latest state of one borrower across protocols.</td></tr>
 <tr><td><code>seneschal_get_borrower_history</code></td><td>Time-series HF traces.</td></tr>
 <tr><td><code>seneschal_builder_leaderboard</code></td><td>Ethereum builder market share.</td></tr>
+<tr><td><code>seneschal_stats_overview</code></td><td>One-call aggregate bundle powering the public dashboard.</td></tr>
+<tr><td><code>seneschal_flashloan_providers</code></td><td>Curated catalogue of mainnet flash-loan providers (Aave, Balancer, Morpho, Uniswap V3, FlashBank).</td></tr>
 </table>
 
 <h2>Data freshness &amp; coverage</h2>

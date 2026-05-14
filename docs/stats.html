@@ -1,0 +1,492 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Seneschal — Public Stats</title>
+<meta name="description" content="Live public dashboard for the Seneschal Data API: at-risk DeFi positions, builder market share, recent liquidations, and historical liquidation activity.">
+<link rel="preconnect" href="https://api.seneschal.space">
+<link rel="preconnect" href="https://cdn.jsdelivr.net">
+<style>
+:root {
+	color-scheme: dark;
+	--bg:        #0d1117;
+	--panel:     #161b22;
+	--panel-2:   #1c2129;
+	--border:    #30363d;
+	--fg:        #e6edf3;
+	--muted:     #8b949e;
+	--accent:    #58a6ff;
+	--accent-2:  #79c0ff;
+	--good:      #3fb950;
+	--warn:      #d29922;
+	--bad:       #f85149;
+	--mono:      ui-monospace, "JetBrains Mono", Consolas, "Liberation Mono", monospace;
+}
+* { box-sizing: border-box }
+html, body { margin: 0; background: var(--bg); color: var(--fg) }
+body {
+	font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+	min-height: 100vh;
+	padding: 1.5em 1em 4em;
+}
+main { max-width: 1180px; margin: 0 auto }
+a { color: var(--accent); text-decoration: none }
+a:hover { text-decoration: underline }
+code, .mono { font-family: var(--mono); font-size: 0.92em }
+
+/* ── header ──────────────────────────────────────────────── */
+header { display: flex; justify-content: space-between; align-items: flex-end; flex-wrap: wrap; gap: 1em; margin-bottom: 1.5em }
+header h1 { margin: 0; font-size: 1.4em; font-weight: 600 }
+header .sub { color: var(--muted); margin-top: .2em; font-size: 0.95em }
+header nav { display: flex; gap: 1em; font-size: 0.9em }
+header nav a { color: var(--muted) }
+#refresh-status { color: var(--muted); font-size: 0.8em; font-family: var(--mono); white-space: nowrap }
+#refresh-status .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--good); margin-right: 0.4em; vertical-align: 1px }
+#refresh-status.loading .dot { background: var(--warn); animation: pulse 0.8s ease-in-out infinite alternate }
+#refresh-status.error .dot { background: var(--bad) }
+@keyframes pulse { from { opacity: .3 } to { opacity: 1 } }
+
+/* ── grid layout ─────────────────────────────────────────── */
+.grid { display: grid; gap: 1em; grid-template-columns: repeat(12, 1fr) }
+.panel { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 1.1em 1.2em }
+.panel h2 { margin: 0 0 .8em; font-size: 0.85em; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; color: var(--muted) }
+.panel.span-3 { grid-column: span 3 }
+.panel.span-4 { grid-column: span 4 }
+.panel.span-6 { grid-column: span 6 }
+.panel.span-8 { grid-column: span 8 }
+.panel.span-12 { grid-column: span 12 }
+@media (max-width: 900px) {
+	.panel.span-3, .panel.span-4 { grid-column: span 6 }
+	.panel.span-6, .panel.span-8 { grid-column: span 12 }
+}
+@media (max-width: 540px) {
+	.panel.span-3, .panel.span-4, .panel.span-6 { grid-column: span 12 }
+}
+
+/* ── KPI tiles ───────────────────────────────────────────── */
+.kpi-value { font: 600 1.8em/1.1 var(--mono); color: var(--fg); margin: 0.1em 0 0.15em; word-break: break-word }
+.kpi-sub { color: var(--muted); font-size: 0.85em }
+.kpi-value.good { color: var(--good) }
+.kpi-value.warn { color: var(--warn) }
+.kpi-value.bad  { color: var(--bad) }
+
+/* ── tables ──────────────────────────────────────────────── */
+table { width: 100%; border-collapse: collapse; font-size: 0.9em }
+th, td { padding: 0.45em 0.6em; text-align: left }
+th { font-weight: 600; color: var(--muted); border-bottom: 1px solid var(--border); font-size: 0.82em; text-transform: uppercase; letter-spacing: 0.03em }
+tbody tr:hover { background: var(--panel-2) }
+td .addr { font-family: var(--mono); font-size: 0.92em; color: var(--accent) }
+td.num { font-family: var(--mono); text-align: right }
+td .hf-cell { padding: 0.05em 0.45em; border-radius: 3px; font-family: var(--mono); display: inline-block }
+.hf-bad  { background: rgba(248,81,73,.18);  color: var(--bad) }
+.hf-warn { background: rgba(210,153,34,.18); color: var(--warn) }
+.hf-good { background: rgba(63,185,80,.18);  color: var(--good) }
+.protocol-tag { display: inline-block; padding: 0.05em 0.4em; border-radius: 3px; background: var(--panel-2); border: 1px solid var(--border); font-size: 0.78em; text-transform: capitalize; color: var(--muted) }
+
+/* ── tabs (used for builder window) ──────────────────────── */
+.tabs { display: flex; gap: 0.4em; margin-bottom: 0.6em }
+.tabs button { background: transparent; color: var(--muted); border: 1px solid var(--border); padding: 0.25em 0.7em; border-radius: 4px; cursor: pointer; font-size: 0.82em; font-family: inherit }
+.tabs button.active { background: var(--panel-2); color: var(--fg); border-color: var(--accent) }
+.tabs button:hover { color: var(--fg) }
+
+/* ── canvas heights ──────────────────────────────────────── */
+.chart-box { position: relative; height: 260px }
+
+footer { margin-top: 2em; color: var(--muted); font-size: 0.85em; text-align: center }
+footer a { color: var(--muted) }
+.error-banner { background: rgba(248,81,73,.15); border: 1px solid var(--bad); color: var(--bad); padding: .6em 1em; border-radius: 6px; margin-bottom: 1em; display: none }
+.error-banner.visible { display: block }
+</style>
+</head>
+<body>
+<main>
+
+<header>
+	<div>
+		<h1>Seneschal — Public Stats</h1>
+		<div class="sub">
+			Live aggregates from the
+			<a href="https://api.seneschal.space">data API</a>
+			and shadow recorder. Auto-refresh every 30 s.
+		</div>
+	</div>
+	<nav>
+		<a href="https://seneschal.space/">Home</a>
+		<a href="https://docs.seneschal.space/">Docs</a>
+		<a href="https://api.seneschal.space/v1/stats/overview">Raw JSON</a>
+	</nav>
+</header>
+
+<div id="error-banner" class="error-banner"></div>
+
+<div class="grid">
+
+	<!-- Hero KPIs -->
+	<div class="panel span-3">
+		<h2>Positions tracked</h2>
+		<div id="kpi-positions" class="kpi-value">—</div>
+		<div class="kpi-sub" id="kpi-positions-sub">across Aave + Morpho</div>
+	</div>
+	<div class="panel span-3">
+		<h2>Total debt watched</h2>
+		<div id="kpi-debt" class="kpi-value">—</div>
+		<div class="kpi-sub" id="kpi-debt-sub">aggregate USD across snapshots</div>
+	</div>
+	<div class="panel span-3">
+		<h2>At risk (HF &lt; 1.05)</h2>
+		<div id="kpi-atrisk" class="kpi-value">—</div>
+		<div class="kpi-sub" id="kpi-atrisk-sub">live count</div>
+	</div>
+	<div class="panel span-3">
+		<h2>Liquidations 24 h</h2>
+		<div id="kpi-liq-24h" class="kpi-value">—</div>
+		<div class="kpi-sub" id="kpi-liq-24h-sub">on-chain events observed</div>
+	</div>
+
+	<!-- HF histogram + builder pie -->
+	<div class="panel span-7">
+		<h2>Health-factor distribution (positions with debt &gt; 0)</h2>
+		<div class="chart-box"><canvas id="chart-hf"></canvas></div>
+	</div>
+	<div class="panel span-5">
+		<h2>Builder share <span style="font-weight:400;text-transform:none;letter-spacing:0;color:var(--muted)">— winning slot share, observed live</span></h2>
+		<div class="tabs" id="builder-tabs">
+			<button data-window="24h" class="active">24 h</button>
+			<button data-window="7d">7 d</button>
+			<button data-window="30d">30 d</button>
+		</div>
+		<div class="chart-box"><canvas id="chart-builders"></canvas></div>
+	</div>
+
+	<!-- Top at risk -->
+	<div class="panel span-7">
+		<h2>Top 10 at-risk borrowers (HF &lt; 1.05, debt &gt; $1 k)</h2>
+		<div style="overflow:auto">
+		<table>
+			<thead>
+				<tr><th>Borrower</th><th>Protocol</th><th class="num">HF</th><th class="num">Debt USD</th></tr>
+			</thead>
+			<tbody id="top-atrisk-rows">
+				<tr><td colspan="4" style="color:var(--muted); text-align:center; padding: 1em">loading…</td></tr>
+			</tbody>
+		</table>
+		</div>
+	</div>
+	<div class="panel span-5">
+		<h2>Liquidations per day (last 30 d)</h2>
+		<div class="chart-box"><canvas id="chart-liq-daily"></canvas></div>
+	</div>
+
+	<!-- Recent liquidations -->
+	<div class="panel span-12">
+		<h2>Recent on-chain liquidations (last 24 h)</h2>
+		<div style="overflow:auto">
+		<table>
+			<thead>
+				<tr>
+					<th>When</th>
+					<th>Borrower</th>
+					<th>Liquidator</th>
+					<th class="num">Debt USD</th>
+					<th>Tx</th>
+				</tr>
+			</thead>
+			<tbody id="recent-liq-rows">
+				<tr><td colspan="5" style="color:var(--muted); text-align:center; padding: 1em">loading…</td></tr>
+			</tbody>
+		</table>
+		</div>
+	</div>
+
+</div>
+
+<footer>
+	<p>
+		Built on top of public on-chain data and Seneschal's own shadow-recorder.
+		Numbers refresh every 30 s. No authentication, no API key, no rate limit
+		beyond DoS protection (120 req/min/IP).
+	</p>
+	<p>
+		<span id="refresh-status"><span class="dot"></span><span id="last-update">loading…</span></span>
+		&nbsp;·&nbsp;
+		<a href="https://github.com/Rotwang9000/seneschal-data-api">Source on GitHub</a>
+	</p>
+</footer>
+
+</main>
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
+<script>
+// ── config ────────────────────────────────────────────────
+const API_BASE = 'https://api.seneschal.space';
+const REFRESH_MS = 30_000;
+const COLOURS = {
+	bucket: ['#f85149', '#ff7b72', '#d29922', '#79c0ff', '#3fb950'],
+	builder: ['#58a6ff', '#bc8cff', '#ff7b72', '#f0b429', '#3fb950', '#79c0ff', '#a371f7', '#56d4dd'],
+	axis: '#8b949e',
+	grid: 'rgba(139,148,158,0.18)'
+};
+Chart.defaults.color = COLOURS.axis;
+Chart.defaults.borderColor = COLOURS.grid;
+Chart.defaults.font.family = '-apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif';
+
+// ── tiny helpers ──────────────────────────────────────────
+const fmtUSD = n => {
+	if (n == null) return '—';
+	if (Math.abs(n) >= 1e9) return '$' + (n / 1e9).toFixed(2) + 'B';
+	if (Math.abs(n) >= 1e6) return '$' + (n / 1e6).toFixed(2) + 'M';
+	if (Math.abs(n) >= 1e3) return '$' + (n / 1e3).toFixed(1) + 'k';
+	return '$' + n.toFixed(2);
+};
+const fmtNum = n => n == null ? '—' : n.toLocaleString('en-GB');
+const fmtAddr = a => a ? a.slice(0, 6) + '…' + a.slice(-4) : '';
+const fmtTime = ms => {
+	if (!ms) return '—';
+	const d = Math.floor((Date.now() - ms) / 1000);
+	if (d < 60) return d + 's ago';
+	if (d < 3600) return Math.floor(d / 60) + 'm ago';
+	if (d < 86400) return Math.floor(d / 3600) + 'h ago';
+	return Math.floor(d / 86400) + 'd ago';
+};
+const hfClass = hf => hf < 1 ? 'hf-bad' : hf < 1.05 ? 'hf-warn' : 'hf-good';
+const hfFmt = hf => hf == null ? '—' : hf < 0.001 ? hf.toExponential(2) : hf.toFixed(3);
+const etherscanTx = h => `https://etherscan.io/tx/${h}`;
+const etherscanAddr = a => `https://etherscan.io/address/${a}`;
+
+// ── chart instances (mutable so we can update vs destroy) ─
+let chartHf = null, chartBuilders = null, chartLiqDaily = null;
+let currentBuilderWindow = '24h';
+let lastOverview = null;
+
+function setStatus(state, text) {
+	const el = document.getElementById('refresh-status');
+	el.className = state;
+	document.getElementById('last-update').textContent = text;
+}
+
+function showError(msg) {
+	const banner = document.getElementById('error-banner');
+	banner.textContent = msg;
+	banner.classList.add('visible');
+}
+function clearError() {
+	document.getElementById('error-banner').classList.remove('visible');
+}
+
+// ── render functions ─────────────────────────────────────
+function renderKpis(d) {
+	const k = d.kpis ?? {};
+	document.getElementById('kpi-positions').textContent = fmtNum(k.positions_tracked);
+	document.getElementById('kpi-positions-sub').textContent =
+		`Aave ${fmtNum(d.totals.borrower_snapshots)} · Morpho ${fmtNum(d.totals.morpho_borrower_snapshots)}`;
+	document.getElementById('kpi-debt').textContent = fmtUSD(k.aave_debt_under_watch_usd);
+	document.getElementById('kpi-debt-sub').textContent =
+		`backed by ${fmtUSD(k.aave_collateral_under_watch_usd)} collateral (Aave V3)`;
+	const atrisk = k.at_risk_count ?? 0;
+	document.getElementById('kpi-atrisk').textContent = fmtNum(atrisk);
+	document.getElementById('kpi-atrisk').className = 'kpi-value ' + (atrisk > 200 ? 'bad' : atrisk > 50 ? 'warn' : 'good');
+	document.getElementById('kpi-atrisk-sub').textContent =
+		`Aave ${fmtNum(k.at_risk_aave_count)} · Morpho ${fmtNum(k.at_risk_morpho_count)}`;
+	document.getElementById('kpi-liq-24h').textContent = fmtNum(k.liquidations_24h_count);
+	document.getElementById('kpi-liq-24h-sub').textContent =
+		`Σ ${fmtUSD(k.liquidations_24h_debt_usd)} debt liquidated`;
+}
+
+function renderHfHistogram(d) {
+	const labels = d.hf_histogram.map(b => b.bucket);
+	const aaveCounts   = d.hf_histogram.map(b => b.aave_count);
+	const morphoCounts = d.hf_histogram.map(b => b.morpho_count);
+	const aaveDebts    = d.hf_histogram.map(b => b.aave_debt_usd);
+	const cfg = {
+		type: 'bar',
+		data: {
+			labels,
+			datasets: [
+				{
+					label: 'Aave positions',
+					data: aaveCounts,
+					backgroundColor: '#58a6ff',
+					stack: 'positions',
+					borderRadius: 3,
+					yAxisID: 'y1',
+					order: 2
+				},
+				{
+					label: 'Morpho positions',
+					data: morphoCounts,
+					backgroundColor: '#bc8cff',
+					stack: 'positions',
+					borderRadius: 3,
+					yAxisID: 'y1',
+					order: 2
+				},
+				{
+					label: 'Aave debt USD',
+					data: aaveDebts,
+					type: 'line',
+					borderColor: '#3fb950',
+					backgroundColor: 'rgba(63,185,80,0.18)',
+					tension: 0.3,
+					yAxisID: 'y2',
+					order: 1
+				}
+			]
+		},
+		options: {
+			responsive: true,
+			maintainAspectRatio: false,
+			scales: {
+				y1: { stacked: true, position: 'left', beginAtZero: true, ticks: { callback: v => v.toLocaleString() }, grid: { color: COLOURS.grid }, title: { display: true, text: 'Positions', color: COLOURS.axis } },
+				y2: { position: 'right', beginAtZero: true, ticks: { callback: v => fmtUSD(v) }, grid: { display: false }, title: { display: true, text: 'Aave debt USD', color: COLOURS.axis } },
+				x:  { stacked: true, grid: { color: COLOURS.grid } }
+			},
+			plugins: {
+				legend: { labels: { color: COLOURS.axis, boxWidth: 12 } },
+				tooltip: {
+					callbacks: {
+						label: (ctx) => ctx.dataset.label === 'Aave debt USD'
+							? `Aave debt: ${fmtUSD(ctx.parsed.y)}`
+							: `${ctx.dataset.label}: ${fmtNum(ctx.parsed.y)}`
+					}
+				}
+			}
+		}
+	};
+	if (chartHf) { chartHf.data = cfg.data; chartHf.options = cfg.options; chartHf.update(); }
+	else chartHf = new Chart(document.getElementById('chart-hf'), cfg);
+}
+
+function renderBuilders(d) {
+	const builders = d.builders[currentBuilderWindow] ?? [];
+	const labels = builders.map(b => b.builder);
+	const values = builders.map(b => b.slots_won);
+	const totalSlots = d.builders[`total_slots_${currentBuilderWindow}`] ?? values.reduce((a,b) => a+b, 0);
+
+	const cfg = {
+		type: 'doughnut',
+		data: { labels, datasets: [{ data: values, backgroundColor: COLOURS.builder, borderColor: 'transparent', hoverOffset: 6 }] },
+		options: {
+			responsive: true,
+			maintainAspectRatio: false,
+			cutout: '60%',
+			plugins: {
+				legend: { position: 'right', labels: { boxWidth: 10, padding: 8, color: COLOURS.axis } },
+				tooltip: {
+					callbacks: {
+						label: (ctx) => {
+							const pct = totalSlots > 0 ? (100 * ctx.parsed / totalSlots).toFixed(2) : '0';
+							return `${ctx.label}: ${fmtNum(ctx.parsed)} slots (${pct}%)`;
+						}
+					}
+				}
+			}
+		}
+	};
+	if (chartBuilders) { chartBuilders.data = cfg.data; chartBuilders.options = cfg.options; chartBuilders.update(); }
+	else chartBuilders = new Chart(document.getElementById('chart-builders'), cfg);
+}
+
+function renderTopAtRisk(d) {
+	const tbody = document.getElementById('top-atrisk-rows');
+	if (!d.top_at_risk.length) {
+		tbody.innerHTML = '<tr><td colspan="4" style="color:var(--muted);text-align:center;padding:1em">none right now</td></tr>';
+		return;
+	}
+	tbody.innerHTML = d.top_at_risk.map(r => `
+		<tr>
+			<td><a class="addr" href="${etherscanAddr(r.borrower)}" target="_blank" rel="noopener">${fmtAddr(r.borrower)}</a></td>
+			<td><span class="protocol-tag">${r.protocol}</span></td>
+			<td class="num"><span class="hf-cell ${hfClass(r.health_factor)}">${hfFmt(r.health_factor)}</span></td>
+			<td class="num">${r.debt_usd != null ? fmtUSD(r.debt_usd) : '<span style="color:var(--muted)" title="Morpho per-market decimals not normalised yet">—</span>'}</td>
+		</tr>
+	`).join('');
+}
+
+function renderLiqDaily(d) {
+	// Bucket the missed_liquidations by day. The endpoint already
+	// pre-aggregates to day_ms; we just need to fill in zero-days
+	// for visual continuity.
+	const days = d.liquidations_30d_per_day;
+	const labels = days.map(p => new Date(p.day_ms).toISOString().slice(5, 10));
+	const counts = days.map(p => p.count);
+	const cfg = {
+		type: 'bar',
+		data: {
+			labels,
+			datasets: [{
+				label: 'Liquidations',
+				data: counts,
+				backgroundColor: '#bc8cff',
+				borderRadius: 3
+			}]
+		},
+		options: {
+			responsive: true,
+			maintainAspectRatio: false,
+			plugins: { legend: { display: false } },
+			scales: {
+				y: { beginAtZero: true, ticks: { precision: 0 }, grid: { color: COLOURS.grid } },
+				x: { grid: { display: false } }
+			}
+		}
+	};
+	if (chartLiqDaily) { chartLiqDaily.data = cfg.data; chartLiqDaily.update(); }
+	else chartLiqDaily = new Chart(document.getElementById('chart-liq-daily'), cfg);
+}
+
+function renderRecentLiq(d) {
+	const tbody = document.getElementById('recent-liq-rows');
+	if (!d.recent_liquidations.length) {
+		tbody.innerHTML = '<tr><td colspan="5" style="color:var(--muted);text-align:center;padding:1em">no liquidations recorded in the last 24h</td></tr>';
+		return;
+	}
+	tbody.innerHTML = d.recent_liquidations.map(r => `
+		<tr>
+			<td>${fmtTime(r.timestamp_ms)}</td>
+			<td><a class="addr" href="${etherscanAddr(r.borrower)}" target="_blank" rel="noopener">${fmtAddr(r.borrower)}</a></td>
+			<td>${r.liquidator ? `<a class="addr" href="${etherscanAddr(r.liquidator)}" target="_blank" rel="noopener">${fmtAddr(r.liquidator)}</a>` : '<span style="color:var(--muted)">—</span>'}</td>
+			<td class="num">${fmtUSD(r.debt_usd ?? r.actual_profit_usd)}</td>
+			<td><a class="addr" href="${etherscanTx(r.tx_hash)}" target="_blank" rel="noopener">${r.tx_hash.slice(0,10)}…</a></td>
+		</tr>
+	`).join('');
+}
+
+// ── data fetch + render orchestration ─────────────────────
+async function refresh() {
+	setStatus('loading', 'refreshing…');
+	try {
+		const r = await fetch(`${API_BASE}/v1/stats/overview`, { headers: { accept: 'application/json' } });
+		if (!r.ok) throw new Error(`HTTP ${r.status}`);
+		const d = await r.json();
+		lastOverview = d;
+		renderKpis(d);
+		renderHfHistogram(d);
+		renderBuilders(d);
+		renderTopAtRisk(d);
+		renderLiqDaily(d);
+		renderRecentLiq(d);
+		clearError();
+		const ts = new Date(d.as_of_ms);
+		setStatus('', `updated ${ts.toLocaleTimeString()}`);
+	} catch (e) {
+		setStatus('error', `error: ${e.message}`);
+		showError(`Could not load stats: ${e.message}. Retrying in 30s.`);
+	}
+}
+
+// builder window tabs
+for (const btn of document.querySelectorAll('#builder-tabs button')) {
+	btn.addEventListener('click', () => {
+		document.querySelectorAll('#builder-tabs button').forEach(b => b.classList.remove('active'));
+		btn.classList.add('active');
+		currentBuilderWindow = btn.dataset.window;
+		if (lastOverview) renderBuilders(lastOverview);
+	});
+}
+
+refresh();
+setInterval(refresh, REFRESH_MS);
+</script>
+</body>
+</html>

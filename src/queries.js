@@ -226,6 +226,119 @@ export function listAtRiskBorrowers(db, params = {}) {
 	};
 }
 
+// ── 2b. listBorrowers — generic discovery endpoint ────────────────────
+
+// More general than listAtRiskBorrowers: allows HF range filtering
+// (both bounds), debt range filtering, sorting, and offset-based
+// pagination. Designed for agents that want to discover positions
+// without knowing addresses in advance.
+const BORROWER_SORT_FIELDS = Object.freeze(['health_factor', 'debt_usd', 'collateral_usd', 'last_observed_ms']);
+
+export function listBorrowers(db, params = {}) {
+	const protocol = validateProtocol(params.protocol, /* allowAll */ true);
+	const minHf = params.min_hf == null ? null : Number(params.min_hf);
+	const maxHf = params.max_hf == null ? null : Number(params.max_hf);
+	const minDebt = params.min_debt_usd == null ? 0 : Number(params.min_debt_usd);
+	const maxDebt = params.max_debt_usd == null ? null : Number(params.max_debt_usd);
+	const limit = clampLimit(params.limit);
+	const offset = params.offset == null ? 0 : Math.max(0, Math.floor(Number(params.offset)));
+	const sortBy = params.sort_by == null ? 'health_factor' : String(params.sort_by);
+	if (!BORROWER_SORT_FIELDS.includes(sortBy)) {
+		throw new TypeError(`sort_by: ${sortBy} not in ${BORROWER_SORT_FIELDS.join(', ')}`);
+	}
+	const sortDir = String(params.sort_dir ?? 'asc').toLowerCase();
+	if (sortDir !== 'asc' && sortDir !== 'desc') {
+		throw new TypeError(`sort_dir: ${sortDir} must be asc or desc`);
+	}
+	for (const [name, v] of [['min_hf', minHf], ['max_hf', maxHf], ['min_debt_usd', minDebt], ['max_debt_usd', maxDebt]]) {
+		if (v != null && !Number.isFinite(v)) {
+			throw new TypeError(`${name}: ${params[name]} is not a finite number`);
+		}
+	}
+
+	const out = [];
+
+	if (protocol === null || protocol === 'aave' || protocol === 'compound') {
+		const rows = db.prepare(`
+			SELECT borrower_address, last_seen_ts, block_number,
+			       health_factor, total_collateral_usd, total_debt_usd,
+			       liquidatable
+			FROM borrower_snapshots
+			WHERE health_factor IS NOT NULL AND health_factor > 0
+			  AND (? IS NULL OR health_factor >= ?)
+			  AND (? IS NULL OR health_factor <  ?)
+			  AND (total_debt_usd IS NULL OR total_debt_usd >= ?)
+			  AND (? IS NULL OR total_debt_usd <= ?)
+		`).all(minHf, minHf, maxHf, maxHf, minDebt, maxDebt, maxDebt);
+		for (const r of rows) {
+			out.push({
+				borrower: r.borrower_address,
+				protocol: 'aave',
+				health_factor: r.health_factor,
+				collateral_usd: r.total_collateral_usd,
+				debt_usd: r.total_debt_usd,
+				liquidatable: Boolean(r.liquidatable),
+				last_observed_ms: r.last_seen_ts,
+				block_number: r.block_number
+			});
+		}
+	}
+
+	if (protocol === null || protocol === 'morpho') {
+		// Morpho's HF synthesised from ltv/lltv; debt_usd unreliable
+		// so we don't filter on max_debt here (would drop too many).
+		const rows = db.prepare(`
+			SELECT market_id, borrower_address, last_seen_ts, block_number,
+			       ltv, lltv, debt_usd, distance_to_liquidation
+			FROM morpho_borrower_snapshots
+			WHERE ltv IS NOT NULL AND ltv > 0 AND ltv < 1e10
+			  AND lltv IS NOT NULL AND lltv > 0
+		`).all();
+		for (const r of rows) {
+			const hf = r.lltv / r.ltv;
+			if (minHf != null && hf < minHf) continue;
+			if (maxHf != null && hf >= maxHf) continue;
+			out.push({
+				borrower: r.borrower_address,
+				protocol: 'morpho',
+				market_id: r.market_id,
+				health_factor: hf,
+				collateral_usd: null,
+				debt_usd: r.debt_usd,
+				ltv: r.ltv,
+				lltv: r.lltv,
+				distance_to_liquidation: r.distance_to_liquidation,
+				liquidatable: hf < 1,
+				last_observed_ms: r.last_seen_ts,
+				block_number: r.block_number
+			});
+		}
+	}
+
+	const dirMul = sortDir === 'desc' ? -1 : 1;
+	out.sort((a, b) => {
+		const av = a[sortBy] == null ? Infinity : a[sortBy];
+		const bv = b[sortBy] == null ? Infinity : b[sortBy];
+		return (av - bv) * dirMul;
+	});
+
+	const totalMatched = out.length;
+	const page = out.slice(offset, offset + limit);
+
+	return {
+		as_of_ms: Date.now(),
+		filters: {
+			protocol, min_hf: minHf, max_hf: maxHf,
+			min_debt_usd: minDebt, max_debt_usd: maxDebt,
+			sort_by: sortBy, sort_dir: sortDir, limit, offset
+		},
+		results: page,
+		result_count: page.length,
+		total_matched: totalMatched,
+		has_more: totalMatched > offset + limit
+	};
+}
+
 // ── 3. recent_liquidations ────────────────────────────────────────────
 
 // Liquidations we observed in the last N (default 24h). Sources:
@@ -652,6 +765,203 @@ export function _resetLeaderboardCacheForTest() {
 	_leaderboardCache.ts = 0;
 	_leaderboardCache.key = null;
 	_leaderboardCache.value = null;
+}
+
+// ── 7. stats overview ─────────────────────────────────────────────────
+
+// Bucket boundaries for the at-risk histogram on the public dashboard.
+// (0, 0.5] = deeply liquidatable
+// (0.5, 0.8] = liquidatable
+// (0.8, 1.0] = on the edge
+// (1.0, 1.1] = at-risk
+// (1.1, 1.5] = stretched
+// (1.5, ∞) = comfortable (not surfaced in this list to keep payload small)
+const HF_BUCKETS = Object.freeze([
+	{ label: '0.0–0.5', min: 0,   max: 0.5 },
+	{ label: '0.5–0.8', min: 0.5, max: 0.8 },
+	{ label: '0.8–1.0', min: 0.8, max: 1.0 },
+	{ label: '1.0–1.1', min: 1.0, max: 1.1 },
+	{ label: '1.1–1.5', min: 1.1, max: 1.5 }
+]);
+
+// Bundle of summary aggregates used by stats.seneschal.space.
+// All inputs are public on-chain so no PII concerns; addresses ARE
+// truncated to 0x…last4 in the top-N list because the dashboard's
+// audience is humans glancing, not bots scraping (bots use the JSON
+// /v1/liquidations/atrisk endpoint directly).
+export async function getStatsOverview(db, params = {}) {
+	const shadowPath = params._shadowPath ?? '/opt/mevbot/data/shadow-blocks.jsonl';
+	const ttlMs = params._ttlMs ?? 60_000;
+	const now = Date.now();
+
+	// Cheap row counts — same trick as getHealth: O(log n) via max(rowid).
+	const tableSize = (table) => {
+		try { return db.prepare(`SELECT max(rowid) AS n FROM ${table}`).get()?.n ?? 0; }
+		catch { return 0; }
+	};
+
+	const totals = {
+		borrower_snapshots: tableSize('borrower_snapshots'),
+		aave_borrower_history_rows: tableSize('aave_borrower_history'),
+		morpho_borrower_snapshots: tableSize('morpho_borrower_snapshots'),
+		missed_liquidations: tableSize('missed_liquidations'),
+		executions: tableSize('executions')
+	};
+
+	// At-risk Aave totals — covers the bulk of debt. SUM over the
+	// snapshot table is index-friendly (idx_snapshot_debt) and cheap.
+	const aaveAggregate = db.prepare(`
+		SELECT
+			COUNT(*) AS positions,
+			COALESCE(SUM(total_debt_usd), 0)        AS total_debt_usd,
+			COALESCE(SUM(total_collateral_usd), 0)  AS total_collateral_usd
+		FROM borrower_snapshots
+		WHERE health_factor IS NOT NULL
+		  AND health_factor > 0
+		  AND total_debt_usd IS NOT NULL
+		  AND total_debt_usd > 0
+	`).get();
+
+	// HF histogram. NB: morpho_borrower_snapshots.debt_usd is unreliable
+	// (different markets are written with different decimal conventions
+	// so single positions can show $16B nonsense). Position counts ARE
+	// reliable, so we expose count breakdowns for both protocols and a
+	// dollar total ONLY for Aave. The dashboard renders the dollar line
+	// labelled "Aave debt USD" and a stacked count for both protocols.
+	const morphoRowsForHistogram = db.prepare(`
+		SELECT ltv, lltv
+		FROM morpho_borrower_snapshots
+		WHERE ltv IS NOT NULL AND ltv > 0 AND ltv < 1e10
+		  AND lltv IS NOT NULL AND lltv > 0
+	`).all();
+	const histogram = HF_BUCKETS.map(b => {
+		const aave = db.prepare(`
+			SELECT COUNT(*)                          AS count,
+			       COALESCE(SUM(total_debt_usd), 0) AS debt_usd
+			FROM borrower_snapshots
+			WHERE health_factor > ?
+			  AND health_factor <= ?
+			  AND total_debt_usd IS NOT NULL
+			  AND total_debt_usd > 0
+		`).get(b.min, b.max);
+		let morphoCount = 0;
+		for (const r of morphoRowsForHistogram) {
+			const hf = r.lltv / r.ltv;
+			if (hf > b.min && hf <= b.max) morphoCount += 1;
+		}
+		return {
+			bucket: b.label,
+			min_hf: b.min,
+			max_hf: b.max,
+			aave_count: aave.count,
+			aave_debt_usd: aave.debt_usd,
+			morpho_count: morphoCount,
+			total_count: aave.count + morphoCount
+		};
+	});
+
+	// Top 10 at-risk (one-line preview for the dashboard). We dedup
+	// addresses across protocols so a single dashboard row points to
+	// "the worst" position for that borrower.
+	const topAtRisk = listAtRiskBorrowers(db, {
+		max_hf: 1.05,
+		min_debt_usd: 1000,
+		limit: 10,
+		_sparkPath: params._sparkPath
+	});
+
+	// Liquidations-per-day for the last 30 days. `missed_liquidations`
+	// is only ~2.4K rows so a date-aggregated query is cheap; the
+	// timestamp index makes the range scan fast.
+	const cutoff30d = now - 30 * 24 * 60 * 60 * 1000;
+	const cutoff24h = now - 24 * 60 * 60 * 1000;
+	const liqsPerDay = db.prepare(`
+		SELECT
+			CAST((timestamp - (timestamp % 86400000)) AS INTEGER) AS day_ms,
+			COUNT(*)                                              AS count,
+			COALESCE(SUM(debt_usd), 0)                            AS debt_usd
+		FROM missed_liquidations
+		WHERE timestamp >= ?
+		GROUP BY day_ms
+		ORDER BY day_ms ASC
+	`).all(cutoff30d);
+
+	// 24h liquidation count, from the DB rather than the truncated
+	// recent_liquidations list — so the KPI isn't capped at 10.
+	const liqs24h = db.prepare(`
+		SELECT COUNT(*) AS count, COALESCE(SUM(debt_usd), 0) AS debt_usd
+		FROM missed_liquidations WHERE timestamp >= ?
+	`).get(cutoff24h);
+
+	// At-risk count — anything with HF below 1.05. Aave straight from
+	// snapshots; Morpho synthesised from ltv/lltv.
+	const aaveAtRisk = db.prepare(`
+		SELECT COUNT(*) AS count, COALESCE(SUM(total_debt_usd), 0) AS debt_usd
+		FROM borrower_snapshots
+		WHERE health_factor > 0 AND health_factor < 1.05
+		  AND total_debt_usd > 0
+	`).get();
+	let morphoAtRiskCount = 0;
+	for (const r of morphoRowsForHistogram) {
+		const hf = r.lltv / r.ltv;
+		if (hf > 0 && hf < 1.05) morphoAtRiskCount += 1;
+	}
+
+	// Builder leaderboard for multiple windows so the dashboard can
+	// show trend without persisted history (24h vs 7d delta).
+	const [share24h, share7d, share30d] = await Promise.all([
+		getBuilderLeaderboard({ window: '24h', limit: 8, _shadowPath: shadowPath, _ttlMs: ttlMs }),
+		getBuilderLeaderboard({ window: '7d',  limit: 8, _shadowPath: shadowPath, _ttlMs: ttlMs }),
+		getBuilderLeaderboard({ window: '30d', limit: 8, _shadowPath: shadowPath, _ttlMs: ttlMs })
+	]);
+
+	// Recent on-chain liquidations (last 24h) — the dashboard renders
+	// this as a feed.
+	const recent24h = recentLiquidations(db, {
+		since_ms: now - 24 * 60 * 60 * 1000,
+		limit: 20
+	});
+
+	return {
+		as_of_ms: now,
+		// Pre-aggregated KPI block. The dashboard reads these directly
+		// instead of recomputing from the histogram / recent feed so the
+		// hero tiles aren't capped by the slice limits.
+		kpis: {
+			positions_tracked: totals.borrower_snapshots + totals.morpho_borrower_snapshots,
+			aave_debt_under_watch_usd: aaveAggregate.total_debt_usd,
+			aave_collateral_under_watch_usd: aaveAggregate.total_collateral_usd,
+			at_risk_count: aaveAtRisk.count + morphoAtRiskCount,
+			at_risk_aave_count: aaveAtRisk.count,
+			at_risk_aave_debt_usd: aaveAtRisk.debt_usd,
+			at_risk_morpho_count: morphoAtRiskCount,
+			liquidations_24h_count: liqs24h.count,
+			liquidations_24h_debt_usd: liqs24h.debt_usd
+		},
+		totals,
+		aave_aggregate: aaveAggregate,
+		hf_histogram: histogram,
+		top_at_risk: topAtRisk.results.map(r => ({
+			borrower: r.borrower,
+			protocol: r.protocol,
+			health_factor: r.health_factor,
+			// Morpho debt_usd is unreliable (see notes in histogram code);
+			// nullify it here so the dashboard doesn't render misleading
+			// numbers. Aave debt stays as-is.
+			debt_usd: r.protocol === 'morpho' ? null : r.debt_usd,
+			liquidatable: r.liquidatable
+		})),
+		liquidations_30d_per_day: liqsPerDay,
+		builders: {
+			'24h': share24h.builders,
+			'7d':  share7d.builders,
+			'30d': share30d.builders,
+			total_slots_24h: share24h.total_slots,
+			total_slots_7d:  share7d.total_slots,
+			total_slots_30d: share30d.total_slots
+		},
+		recent_liquidations: recent24h.results.slice(0, 10)
+	};
 }
 
 // Re-export pieces tests want.

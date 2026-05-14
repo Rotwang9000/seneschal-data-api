@@ -24,11 +24,14 @@ import { openLiveDb, fileMtimeMs } from './db.js';
 import {
 	getHealth,
 	listAtRiskBorrowers,
+	listBorrowers,
 	recentLiquidations,
 	getBorrower,
 	getBorrowerHistory,
-	getBuilderLeaderboard
+	getBuilderLeaderboard,
+	getStatsOverview
 } from './queries.js';
+import { filterProviders, FLASHLOAN_PROVIDERS } from './flashloan-providers.js';
 
 // ── Zod schemas ───────────────────────────────────────────────────────
 
@@ -95,6 +98,24 @@ export function buildMcpServer(options = {}) {
 		return asContent(listAtRiskBorrowers(db, { ...params, _sparkPath: sparkPath }));
 	});
 
+	server.registerTool('seneschal_list_borrowers', {
+		title: 'List borrowers (generic)',
+		description: 'Generic discovery surface over the borrower snapshot table. Like `seneschal_list_at_risk_borrowers` but with both lower and upper HF bounds, optional max-debt cap, configurable sort field/direction, and offset-based pagination. Use this to walk the catalogue without knowing borrower addresses in advance.',
+		inputSchema: {
+			protocol: Protocol.optional().describe('Restrict to one protocol; omit for all.'),
+			min_hf: NumericString.optional().describe('Inclusive lower bound on health factor.'),
+			max_hf: NumericString.optional().describe('Exclusive upper bound on health factor.'),
+			min_debt_usd: NumericString.optional().describe('Minimum debt in USD (default 0).'),
+			max_debt_usd: NumericString.optional().describe('Maximum debt in USD (default unbounded).'),
+			sort_by: z.enum(['health_factor', 'debt_usd', 'collateral_usd', 'last_observed_ms']).optional().describe("Default 'health_factor'."),
+			sort_dir: z.enum(['asc', 'desc']).optional().describe("Default 'asc'."),
+			limit: Limit.optional().describe('Max rows per page. Default 50, max 500.'),
+			offset: NumericString.optional().describe('Pagination offset. Default 0.')
+		}
+	}, async (params) => {
+		return asContent(listBorrowers(db, params));
+	});
+
 	server.registerTool('seneschal_recent_liquidations', {
 		title: 'Recent liquidations',
 		description: 'Liquidations observed in the recent past, including both ones won by other liquidators (`outcome=won_by_other`) and ones we ourselves landed (`outcome=we_landed`). Sorted by timestamp descending.',
@@ -145,6 +166,40 @@ export function buildMcpServer(options = {}) {
 			_shadowPath: shadowPath,
 			_ttlMs: ttlMs
 		}));
+	});
+
+	server.registerTool('seneschal_stats_overview', {
+		title: 'Public stats overview',
+		description: 'Aggregate snapshot powering the public stats dashboard at stats.seneschal.space: total positions tracked, debt under watch, HF distribution histogram, top-10 at-risk borrowers, 30-day liquidations-per-day series, builder market share for 24h/7d/30d windows, and 10 most recent on-chain liquidations. One call returns everything needed to render the dashboard.',
+		inputSchema: {}
+	}, async () => {
+		return asContent(await getStatsOverview(db, {
+			_shadowPath: shadowPath,
+			_sparkPath: sparkPath,
+			_ttlMs: ttlMs
+		}));
+	});
+
+	server.registerTool('seneschal_flashloan_providers', {
+		title: 'Flash loan provider catalogue',
+		description: 'Curated catalogue of Ethereum mainnet flash-loan providers (Aave V3, Balancer V2, Morpho Blue, Uniswap V3, FlashBank) with current fee in basis points, contract addresses, qualitative liquidity notes, and per-provider caveats. Helpful for searcher agents picking the cheapest viable provider for a liquidation or arbitrage strategy. The catalogue is editorially open: filter by chain, max fee, or multi-asset support.',
+		inputSchema: {
+			chain: z.string().optional().describe('Chain key, default "ethereum". Currently only ethereum is catalogued.'),
+			max_fee_bps: z.union([z.number(), z.string()]).optional().describe('Drop providers whose flat fee exceeds this in basis points (1 bp = 0.01%).'),
+			multi_asset: z.boolean().optional().describe('If true, only return providers that support borrowing multiple assets in a single flash loan.')
+		}
+	}, async (params) => {
+		const filtered = filterProviders({
+			chain: params.chain ?? 'ethereum',
+			maxFeeBps: params.max_fee_bps != null ? Number(params.max_fee_bps) : null,
+			multiAsset: params.multi_asset ?? null
+		});
+		return asContent({
+			providers: filtered,
+			total: filtered.length,
+			catalogue_size: FLASHLOAN_PROVIDERS.length,
+			note: 'Static catalogue. Caller must verify live liquidity per provider before relying on a specific amount.'
+		});
 	});
 
 	return server;

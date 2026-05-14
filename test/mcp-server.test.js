@@ -87,11 +87,14 @@ describe('in-process tool surface', () => {
 		const names = tools.tools.map(t => t.name).sort();
 		expect(names).toEqual([
 			'seneschal_builder_leaderboard',
+			'seneschal_flashloan_providers',
 			'seneschal_get_borrower',
 			'seneschal_get_borrower_history',
 			'seneschal_health',
 			'seneschal_list_at_risk_borrowers',
-			'seneschal_recent_liquidations'
+			'seneschal_list_borrowers',
+			'seneschal_recent_liquidations',
+			'seneschal_stats_overview'
 		]);
 		// Every tool has a description (improves agent discoverability).
 		for (const t of tools.tools) {
