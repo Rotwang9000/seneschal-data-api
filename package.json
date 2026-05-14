@@ -1,0 +1,33 @@
+{
+	"name": "seneschal-data-api",
+	"version": "0.1.0",
+	"description": "Public REST + MCP server exposing Seneschal's liquidation, builder, and oracle telemetry.",
+	"type": "module",
+	"private": true,
+	"bin": {
+		"seneschal-rest": "bin/rest.mjs",
+		"seneschal-mcp": "bin/mcp.mjs"
+	},
+	"scripts": {
+		"start:rest": "node bin/rest.mjs",
+		"start:mcp": "node bin/mcp.mjs",
+		"test": "node --experimental-vm-modules node_modules/.bin/jest",
+		"test:watch": "node --experimental-vm-modules node_modules/.bin/jest --watch"
+	},
+	"dependencies": {
+		"@fastify/cors": "^11.2.0",
+		"@fastify/rate-limit": "^10.3.0",
+		"@modelcontextprotocol/sdk": "^1.29.0",
+		"better-sqlite3": "^12.10.0",
+		"fastify": "^5.8.5",
+		"zod": "^4.4.3"
+	},
+	"devDependencies": {
+		"@jest/globals": "^30.1.2",
+		"jest": "^30.1.3",
+		"supertest": "^7.1.4"
+	},
+	"engines": {
+		"node": ">=20.0.0"
+	}
+}

@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Seneschal</title>
+<meta name="description" content="Ethereum mainnet block builder and DeFi liquidation telemetry API.">
+<style>
+body { font: 16px/1.5 system-ui, sans-serif; max-width: 42em; margin: 3em auto; padding: 0 1em; color: #111 }
+h1 { font-weight: 600; margin-bottom: .1em }
+h2 { font-weight: 600; font-size: 1.1em; margin-top: 1.8em }
+code { background:#f4f4f4; padding: 1px 5px; border-radius: 3px; font-size: 0.92em }
+a { color: #1462b3 }
+.muted { color: #777; font-size: 0.92em }
+.row { display: flex; gap: 1em; flex-wrap: wrap; margin: 0.8em 0 }
+.row a { padding: 0.4em 0.8em; border: 1px solid #ccc; border-radius: 4px; text-decoration: none; background: #fafafa }
+.row a:hover { background: #f0f0f0 }
+</style>
+<h1>Seneschal</h1>
+<p class=muted>Ethereum mainnet block builder. <code>extra_data = Seneschal/0.1</code>.</p>
+
+<p>
+Permissionless, independent block builder running an rbuilder fork from
+a single co-located node in Helsinki. Bidding into Aestus, Agnostic,
+ETHGas, Flashbots, Titan and Ultrasound mainnet relays.
+</p>
+
+<h2>For searchers &amp; matchmakers</h2>
+<p>
+Submit bundles via <code>https://rpc.seneschal.space</code> with
+<code>eth_sendBundle</code> or <code>eth_cancelBundle</code>. No
+registration required. Commits to the Flashbots
+<a href="https://github.com/flashbots/dowg/blob/main/fair-market-principles.md">Fair Market Principles</a>.
+</p>
+
+<h2>For everyone else: free liquidation &amp; builder data</h2>
+<p>
+We also publish a free, no-signup API exposing the cross-protocol
+liquidation telemetry our bot already collects &mdash; positions near
+liquidation across Aave / Morpho / Spark / Compound, recent on-chain
+liquidations, and ground-truth builder market share.
+</p>
+<div class="row">
+<a href="https://docs.seneschal.space">Docs &raquo;</a>
+<a href="https://api.seneschal.space/v1/health">REST <code>/v1/health</code></a>
+<a href="https://api.seneschal.space/v1/builders/leaderboard?window=24h&amp;limit=10">Builder leaderboard (24h)</a>
+<a href="https://mcp.seneschal.space/health">MCP <code>/health</code></a>
+</div>
+
+<p class=muted>
+Contact: Rotwang9000 on Discord.
+</p>
+</body>
+</html>

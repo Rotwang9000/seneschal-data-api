@@ -1,0 +1,222 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Seneschal Data API</title>
+<meta name="description" content="Free public REST and MCP API exposing real-time and historical liquidation telemetry for Aave, Morpho, Spark and Compound on Ethereum mainnet.">
+<style>
+:root {
+	--fg: #1a1a1a;
+	--muted: #6b6b6b;
+	--accent: #1462b3;
+	--bg: #fdfdfc;
+	--code-bg: #f4f4f4;
+	--border: #e4e4e2;
+}
+* { box-sizing: border-box }
+html, body { background: var(--bg); color: var(--fg); margin: 0 }
+body { font: 16px/1.6 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; padding: 1em }
+main { max-width: 52em; margin: 0 auto; padding: 2em 1em 4em }
+h1 { font-weight: 600; font-size: 2em; margin: 0 0 .1em }
+h2 { font-weight: 600; font-size: 1.3em; margin-top: 2em; padding-bottom: .15em; border-bottom: 1px solid var(--border) }
+h3 { font-weight: 600; font-size: 1.05em; margin-top: 1.5em }
+p { margin: .6em 0 }
+a { color: var(--accent) }
+.muted { color: var(--muted); font-size: 0.92em }
+code, pre { font-family: ui-monospace, "JetBrains Mono", Consolas, "Liberation Mono", monospace; font-size: 0.92em }
+code { background: var(--code-bg); padding: 1px 5px; border-radius: 3px; word-break: break-word }
+pre { background: var(--code-bg); padding: 0.8em 1em; border-radius: 4px; overflow-x: auto; line-height: 1.45 }
+pre code { background: transparent; padding: 0 }
+.endpoint { background: #fff; border: 1px solid var(--border); border-radius: 5px; padding: 0.6em 1em; margin: 0.6em 0 }
+.method { display: inline-block; font-weight: 600; color: #fff; background: #444; padding: 1px 6px; border-radius: 3px; font-size: 0.82em; margin-right: 0.4em }
+.method.get { background: #1462b3 }
+.method.post { background: #2c8a4b }
+table { border-collapse: collapse; width: 100%; margin: 0.8em 0; font-size: 0.92em }
+th, td { padding: 0.5em 0.7em; border: 1px solid var(--border); text-align: left; vertical-align: top }
+th { background: #f7f7f5 }
+.callout { background: #fff8e7; border-left: 3px solid #e0b400; padding: 0.6em 1em; margin: 1em 0; border-radius: 0 4px 4px 0 }
+.callout-info { background: #eaf3fc; border-left-color: #1462b3 }
+footer { text-align: center; margin-top: 4em; padding-top: 2em; border-top: 1px solid var(--border); color: var(--muted); font-size: 0.9em }
+</style>
+</head>
+<body>
+<main>
+
+<h1>Seneschal Data API</h1>
+<p class="muted">
+Free, public, read-only HTTP and Model Context Protocol API exposing
+real-time and historical DeFi liquidation telemetry for Aave, Morpho,
+Spark and Compound on Ethereum mainnet, plus block-builder market share
+data from our own shadow recorder.
+</p>
+
+<div class="callout callout-info">
+<strong>No signup. No API key. No rate limit beyond DoS protection
+(120 req/min/IP).</strong>
+Submit bugs and feature requests to <code>Rotwang9000</code> on Discord.
+</div>
+
+<h2>Why this exists</h2>
+<p>
+Seneschal runs an Ethereum block builder and a vertically-integrated
+liquidation searcher. As a side effect of doing our own work we
+continuously track ~500 Morpho borrowers, 1,300+ Spark borrowers, every
+Aave V3 mainnet position with non-trivial debt, and the winning builder
+of every slot since May 2026. Nobody else publishes this combination,
+so we expose it.
+</p>
+<p>
+Two protocols, same backend:
+</p>
+<ul>
+<li><strong>REST API</strong> at <code>https://api.seneschal.space</code> &mdash; for dashboards, monitoring tools, anything that speaks HTTP.</li>
+<li><strong>MCP server</strong> at <code>https://mcp.seneschal.space</code> &mdash; for AI agents (Claude, Cursor, Continue, etc.) using the <a href="https://modelcontextprotocol.io">Model Context Protocol</a>.</li>
+</ul>
+
+<h2>Quick start</h2>
+
+<h3>REST</h3>
+<pre><code>curl https://api.seneschal.space/v1/liquidations/atrisk?max_hf=1.05</code></pre>
+
+<h3>MCP (Claude Desktop / Cursor)</h3>
+<p>
+Add this to your MCP client config (e.g. <code>~/.cursor/mcp.json</code>):
+</p>
+<pre><code>{
+  "mcpServers": {
+    "seneschal-data": {
+      "url": "https://mcp.seneschal.space/"
+    }
+  }
+}</code></pre>
+<p>
+Six tools become available to your agent: <code>seneschal_health</code>,
+<code>seneschal_list_at_risk_borrowers</code>,
+<code>seneschal_recent_liquidations</code>,
+<code>seneschal_get_borrower</code>,
+<code>seneschal_get_borrower_history</code>,
+<code>seneschal_builder_leaderboard</code>.
+</p>
+
+<h2>REST endpoints</h2>
+
+<div class="endpoint">
+<span class="method get">GET</span><code>/v1/health</code>
+<p class="muted">Service liveness plus row counts and data-source mtimes. Useful for both monitoring probes and confirming freshness before consuming downstream data.</p>
+</div>
+
+<div class="endpoint">
+<span class="method get">GET</span><code>/v1/liquidations/atrisk</code>
+<p>Current snapshot of borrowers near liquidation, sorted by ascending health factor.</p>
+<table>
+<tr><th>Query param</th><th>Type</th><th>Default</th><th>Notes</th></tr>
+<tr><td><code>protocol</code></td><td>enum</td><td>(all)</td><td><code>aave</code>, <code>morpho</code>, <code>spark</code>, or <code>compound</code></td></tr>
+<tr><td><code>max_hf</code></td><td>number</td><td>(none)</td><td>Return only positions with health factor strictly below this.</td></tr>
+<tr><td><code>min_debt_usd</code></td><td>number</td><td>0</td><td>Filter out dust.</td></tr>
+<tr><td><code>limit</code></td><td>1..500</td><td>50</td><td>Max rows.</td></tr>
+</table>
+</div>
+
+<div class="endpoint">
+<span class="method get">GET</span><code>/v1/liquidations/recent</code>
+<p>Liquidations observed in the recent past. Each row's <code>outcome</code> field is either <code>won_by_other</code> (a competitor liquidator landed) or <code>we_landed</code> (Seneschal's own searcher won it).</p>
+<table>
+<tr><th>Query param</th><th>Type</th><th>Default</th><th>Notes</th></tr>
+<tr><td><code>since_ms</code></td><td>epoch ms</td><td>now &minus; 24h</td></tr>
+<tr><td><code>protocol</code></td><td>enum</td><td>(all)</td></tr>
+<tr><td><code>limit</code></td><td>1..500</td><td>50</td></tr>
+</table>
+</div>
+
+<div class="endpoint">
+<span class="method get">GET</span><code>/v1/borrowers/:address</code>
+<p>Combined snapshot for one borrower across every protocol where we have data.</p>
+</div>
+
+<div class="endpoint">
+<span class="method get">GET</span><code>/v1/borrowers/:address/history</code>
+<p>Per-block historical health-factor traces for one borrower.</p>
+<table>
+<tr><th>Query param</th><th>Type</th><th>Default</th><th>Notes</th></tr>
+<tr><td><code>protocol</code></td><td>enum</td><td>(required)</td><td><code>aave</code> or <code>morpho</code> (Spark history not retained as SQL).</td></tr>
+<tr><td><code>since_ms</code></td><td>epoch ms</td><td>now &minus; 7d</td></tr>
+<tr><td><code>until_ms</code></td><td>epoch ms</td><td>now</td></tr>
+<tr><td><code>granularity</code></td><td>enum</td><td>raw</td><td><code>raw</code>, <code>hour</code>, or <code>day</code></td></tr>
+<tr><td><code>limit</code></td><td>1..500</td><td>500</td></tr>
+</table>
+</div>
+
+<div class="endpoint">
+<span class="method get">GET</span><code>/v1/builders/leaderboard</code>
+<p>Block-builder market share derived from our own slot-by-slot shadow recorder. Cached for 60s.</p>
+<table>
+<tr><th>Query param</th><th>Type</th><th>Default</th><th>Notes</th></tr>
+<tr><td><code>window</code></td><td>enum</td><td>24h</td><td><code>24h</code>, <code>7d</code>, <code>30d</code>, <code>all</code></td></tr>
+<tr><td><code>limit</code></td><td>1..500</td><td>20</td><td>Top-N builders to return.</td></tr>
+</table>
+</div>
+
+<h2>Worked example</h2>
+<p>Find the most at-risk Aave borrower right now and pull their HF history:</p>
+<pre><code>$ curl -s 'https://api.seneschal.space/v1/liquidations/atrisk?protocol=aave&limit=1' | jq '.results[0]'
+{
+  "borrower": "0x...",
+  "protocol": "aave",
+  "health_factor": 1.011,
+  "collateral_usd": 8412055,
+  "debt_usd": 8240015,
+  "liquidatable": false,
+  ...
+}
+
+$ curl -s "https://api.seneschal.space/v1/borrowers/0x.../history?protocol=aave&granularity=hour"
+{ "address": "0x...", "points": [ ... 168 hourly observations ... ] }</code></pre>
+
+<h2>MCP tool reference</h2>
+<p>
+Identical surface to REST: every endpoint has a matching tool with the
+same parameters and same response shape (just wrapped as MCP tool content).
+</p>
+<table>
+<tr><th>Tool</th><th>Use</th></tr>
+<tr><td><code>seneschal_health</code></td><td>Liveness + freshness probe.</td></tr>
+<tr><td><code>seneschal_list_at_risk_borrowers</code></td><td>Find liquidatable positions across all DeFi.</td></tr>
+<tr><td><code>seneschal_recent_liquidations</code></td><td>Recent on-chain liquidation events.</td></tr>
+<tr><td><code>seneschal_get_borrower</code></td><td>Latest state of one borrower across protocols.</td></tr>
+<tr><td><code>seneschal_get_borrower_history</code></td><td>Time-series HF traces.</td></tr>
+<tr><td><code>seneschal_builder_leaderboard</code></td><td>Ethereum builder market share.</td></tr>
+</table>
+
+<h2>Data freshness &amp; coverage</h2>
+<ul>
+<li><strong>Aave V3 mainnet</strong> &mdash; live, latest health factor refreshed every block for borrowers with non-trivial debt.</li>
+<li><strong>Morpho Blue mainnet</strong> &mdash; live, latest snapshot ~10 minutes old.</li>
+<li><strong>Spark</strong> &mdash; snapshot refreshed periodically; check <code>/v1/health</code>'s <code>spark_borrowers_mtime_ms</code>.</li>
+<li><strong>Compound</strong> &mdash; merged into the Aave snapshot table by the upstream writer; query with <code>protocol=aave</code>.</li>
+<li><strong>Shadow blocks</strong> &mdash; one row per slot since May 2026 (~55k rows at launch, growing). Built from our own observation of relay-served payloads, not relay self-reporting.</li>
+</ul>
+
+<h2>Limits, terms, fair use</h2>
+<ul>
+<li>120 req/min per IP, soft. Heavy users should ask for an allow-list bump on Discord.</li>
+<li>No SLA. This is a free best-effort service. Expect occasional restarts.</li>
+<li>Use of the data must not violate any privacy or legal restrictions in your jurisdiction. We surface only on-chain data and our own observations.</li>
+<li>Crediting Seneschal (<code>https://seneschal.space</code>) in derived work is appreciated but not required.</li>
+</ul>
+
+<h2>About</h2>
+<p>
+Seneschal is a single-operator Ethereum block builder and searcher
+running an <code>rbuilder</code> fork from a co-located server in
+Helsinki. Builder on-chain extra_data is <code>Seneschal/0.1</code>.
+Contact <a href="https://discord.com">@Rotwang9000</a> on Discord.
+</p>
+
+<footer>
+<p>Seneschal &middot; <a href="https://seneschal.space/">seneschal.space</a> &middot; <a href="https://github.com/flashbots/dowg/pull/43">dowg PR</a></p>
+</footer>
+
+</main>
+</body>
+</html>
