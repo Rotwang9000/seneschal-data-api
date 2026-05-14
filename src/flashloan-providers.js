@@ -72,13 +72,28 @@ export const FLASHLOAN_PROVIDERS = Object.freeze([
 		fee_bps: 2,
 		fee_bps_note: "0.02% — configurable per token via setTokenConfig (1–100 bps range)",
 		docs: 'https://flashbank.net',
-		liquidity_note: "Just-in-time model: WETH is pulled from LPs' wallets only during the flash loan, never deposited into a pool. Available liquidity equals the sum of active LP commitments, queryable via `getCommitments(token)`. As of launch, mainnet commitments are 0 — useful if and when LPs arrive.",
+		repo: 'https://github.com/Rotwang9000/flashbank-net',
+		liquidity_note: "Just-in-time model: WETH stays in LPs' wallets and is only pulled for the microseconds of a flash loan. Available liquidity = sum of active LP commitments, queryable via `getCommitments(token)`. Multi-chain (Ethereum, Arbitrum, Base) — see repo for each router address.",
 		supports_multi_asset: false,
 		notable_constraints: [
 			'WETH-first at launch; other ERC-20s require setTokenConfig.',
-			'Provider availability depends on LP commitments — query before assuming liquidity.',
-			'Lower fee than Aave but currently lower liquidity than Balancer + Aave.'
-		]
+			'Provider availability depends on LP commitments — query getCommitments(token) before assuming liquidity.',
+			'Lower fee than Aave but currently lower committed liquidity than Balancer/Aave; will improve as LPs onboard.'
+		],
+		// FlashBank is unique in this catalogue in that anyone can be
+		// liquidity provider with just a wallet approval — no deposit,
+		// no lock-up, no smart-contract custody. Surfaced explicitly
+		// so MEV / treasury agents discovering this catalogue see the
+		// LP path, not just the borrower path.
+		lp_path: {
+			steps: [
+				'Approve `FlashBankRouter` to spend WETH from your wallet (`weth.approve(router, limit)`).',
+				'Call `router.setCommitment(weth, limit, expiry, paused=false)` to advertise how much WETH you will lend.',
+				'Earn the per-flash-loan fee automatically; WETH never leaves your wallet outside of borrow execution.',
+				'Pause anytime with `router.setCommitment(weth, limit, expiry, paused=true)` or drop limit to 0.'
+			],
+			interface_url: 'https://flashbank.net'
+		}
 	},
 	{
 		id: 'uniswap-v3',

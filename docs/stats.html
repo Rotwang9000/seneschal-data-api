@@ -48,20 +48,29 @@ header nav a { color: var(--muted) }
 @keyframes pulse { from { opacity: .3 } to { opacity: 1 } }
 
 /* ── grid layout ─────────────────────────────────────────── */
-.grid { display: grid; gap: 1em; grid-template-columns: repeat(12, 1fr) }
-.panel { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 1.1em 1.2em }
+/* minmax(0,1fr) instead of 1fr so columns don't stretch when a
+   child's content (e.g. long KPI sub-text) exceeds the column's
+   intrinsic min-width. */
+.grid { display: grid; gap: 1em; grid-template-columns: repeat(12, minmax(0, 1fr)) }
+/* Dedicated KPI strip uses auto-fit so the tiles stay equal-width
+   and gracefully wrap on narrow viewports instead of one card
+   stealing space from its siblings. */
+.kpi-strip { display: grid; gap: 1em; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); margin-bottom: 1em }
+.panel { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 1.1em 1.2em; min-width: 0 }
 .panel h2 { margin: 0 0 .8em; font-size: 0.85em; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; color: var(--muted) }
 .panel.span-3 { grid-column: span 3 }
 .panel.span-4 { grid-column: span 4 }
+.panel.span-5 { grid-column: span 5 }
 .panel.span-6 { grid-column: span 6 }
+.panel.span-7 { grid-column: span 7 }
 .panel.span-8 { grid-column: span 8 }
 .panel.span-12 { grid-column: span 12 }
 @media (max-width: 900px) {
-	.panel.span-3, .panel.span-4 { grid-column: span 6 }
-	.panel.span-6, .panel.span-8 { grid-column: span 12 }
+	.panel.span-3, .panel.span-4, .panel.span-5 { grid-column: span 6 }
+	.panel.span-6, .panel.span-7, .panel.span-8 { grid-column: span 12 }
 }
 @media (max-width: 540px) {
-	.panel.span-3, .panel.span-4, .panel.span-6 { grid-column: span 12 }
+	.panel.span-3, .panel.span-4, .panel.span-5, .panel.span-6 { grid-column: span 12 }
 }
 
 /* ── KPI tiles ───────────────────────────────────────────── */
@@ -70,6 +79,19 @@ header nav a { color: var(--muted) }
 .kpi-value.good { color: var(--good) }
 .kpi-value.warn { color: var(--warn) }
 .kpi-value.bad  { color: var(--bad) }
+
+/* ── operator activity strip ─────────────────────────────── */
+.operator-strip { border-left: 3px solid var(--accent); margin-bottom: 1em }
+.operator-strip-head { display: flex; justify-content: space-between; align-items: baseline; gap: 1em; margin-bottom: 0.9em; flex-wrap: wrap }
+.operator-tiles { display: grid; gap: 0.9em; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)) }
+.op-tile { background: var(--panel-2); border: 1px solid var(--border); border-radius: 6px; padding: 0.8em 0.9em; min-width: 0 }
+.op-label { color: var(--muted); font-size: 0.78em; letter-spacing: 0.04em; text-transform: uppercase; font-weight: 600 }
+.op-value { font: 600 1.45em/1.15 var(--mono); margin: 0.18em 0 0.1em; color: var(--fg); word-break: break-word }
+.op-value.mono-sm { font-size: 1.05em }
+.op-value.good { color: var(--good) }
+.op-value.warn { color: var(--warn) }
+.op-value.bad  { color: var(--bad) }
+.op-sub { color: var(--muted); font-size: 0.82em }
 
 /* ── tables ──────────────────────────────────────────────── */
 table { width: 100%; border-collapse: collapse; font-size: 0.9em }
@@ -120,29 +142,69 @@ footer a { color: var(--muted) }
 
 <div id="error-banner" class="error-banner"></div>
 
-<div class="grid">
-
-	<!-- Hero KPIs -->
-	<div class="panel span-3">
+<div class="kpi-strip">
+	<div class="panel">
 		<h2>Positions tracked</h2>
 		<div id="kpi-positions" class="kpi-value">—</div>
 		<div class="kpi-sub" id="kpi-positions-sub">across Aave + Morpho</div>
 	</div>
-	<div class="panel span-3">
+	<div class="panel">
 		<h2>Total debt watched</h2>
 		<div id="kpi-debt" class="kpi-value">—</div>
 		<div class="kpi-sub" id="kpi-debt-sub">aggregate USD across snapshots</div>
 	</div>
-	<div class="panel span-3">
+	<div class="panel">
 		<h2>At risk (HF &lt; 1.05)</h2>
 		<div id="kpi-atrisk" class="kpi-value">—</div>
 		<div class="kpi-sub" id="kpi-atrisk-sub">live count</div>
 	</div>
-	<div class="panel span-3">
+	<div class="panel">
 		<h2>Liquidations 24 h</h2>
 		<div id="kpi-liq-24h" class="kpi-value">—</div>
 		<div class="kpi-sub" id="kpi-liq-24h-sub">on-chain events observed</div>
 	</div>
+</div>
+
+<section class="operator-strip panel">
+	<header class="operator-strip-head">
+		<h2 style="color:var(--accent);margin:0">Seneschal activity — last 24h</h2>
+		<span class="kpi-sub">counts only — no profit figures exposed</span>
+	</header>
+	<div class="operator-tiles">
+		<div class="op-tile">
+			<div class="op-label">Liquidation attempts</div>
+			<div class="op-value" id="op-attempts">—</div>
+			<div class="op-sub" id="op-attempts-sub">7d: —</div>
+		</div>
+		<div class="op-tile">
+			<div class="op-label">Liquidations won</div>
+			<div class="op-value" id="op-wins">—</div>
+			<div class="op-sub" id="op-wins-sub">win rate —</div>
+		</div>
+		<div class="op-tile">
+			<div class="op-label">Builder blocks landed</div>
+			<div class="op-value" id="op-builder">—</div>
+			<div class="op-sub" id="op-builder-sub">7d / 30d: — / —</div>
+		</div>
+		<div class="op-tile">
+			<div class="op-label">Borrower snapshot age</div>
+			<div class="op-value mono-sm" id="op-snap-age">—</div>
+			<div class="op-sub" id="op-snap-age-sub">writer freshness</div>
+		</div>
+		<div class="op-tile">
+			<div class="op-label">Shadow recorder age</div>
+			<div class="op-value mono-sm" id="op-shadow-age">—</div>
+			<div class="op-sub" id="op-shadow-age-sub">per-slot bid log</div>
+		</div>
+		<div class="op-tile">
+			<div class="op-label">Last execution</div>
+			<div class="op-value mono-sm" id="op-exec-age">—</div>
+			<div class="op-sub" id="op-exec-age-sub">most recent bot action</div>
+		</div>
+	</div>
+</section>
+
+<div class="grid">
 
 	<!-- HF histogram + builder pie -->
 	<div class="panel span-7">
@@ -282,7 +344,7 @@ function renderKpis(d) {
 		`Aave ${fmtNum(d.totals.borrower_snapshots)} · Morpho ${fmtNum(d.totals.morpho_borrower_snapshots)}`;
 	document.getElementById('kpi-debt').textContent = fmtUSD(k.aave_debt_under_watch_usd);
 	document.getElementById('kpi-debt-sub').textContent =
-		`backed by ${fmtUSD(k.aave_collateral_under_watch_usd)} collateral (Aave V3)`;
+		`with ${fmtUSD(k.aave_collateral_under_watch_usd)} collateral`;
 	const atrisk = k.at_risk_count ?? 0;
 	document.getElementById('kpi-atrisk').textContent = fmtNum(atrisk);
 	document.getElementById('kpi-atrisk').className = 'kpi-value ' + (atrisk > 200 ? 'bad' : atrisk > 50 ? 'warn' : 'good');
@@ -291,6 +353,65 @@ function renderKpis(d) {
 	document.getElementById('kpi-liq-24h').textContent = fmtNum(k.liquidations_24h_count);
 	document.getElementById('kpi-liq-24h-sub').textContent =
 		`Σ ${fmtUSD(k.liquidations_24h_debt_usd)} debt liquidated`;
+}
+
+function fmtAge(seconds) {
+	if (seconds == null) return '—';
+	if (seconds < 60) return `${seconds}s`;
+	if (seconds < 3600) return `${Math.floor(seconds / 60)}m`;
+	if (seconds < 86400) return `${Math.floor(seconds / 3600)}h ${Math.floor((seconds % 3600) / 60)}m`;
+	return `${Math.floor(seconds / 86400)}d`;
+}
+
+// Different signals have different natural cadences so a single
+// threshold misleads. shadow_blocks_age = per-slot (every ~12s),
+// borrower_snapshot_age = continuous, execution_age = sporadic
+// (only fires when an opportunity arises — minutes-to-hours is fine).
+function freshnessClass(seconds, kind) {
+	if (seconds == null) return 'warn';
+	if (kind === 'slot')      return seconds <   60 ? 'good' : seconds <   300 ? 'warn' : 'bad';
+	if (kind === 'continuous') return seconds <  600 ? 'good' : seconds <  3600 ? 'warn' : 'bad';
+	if (kind === 'sporadic')  return seconds < 6*3600 ? 'good' : seconds < 24*3600 ? 'warn' : 'bad';
+	// fallback
+	return seconds < 600 ? 'good' : seconds < 3600 ? 'warn' : 'bad';
+}
+
+function renderOperator(d) {
+	const op = d.operator_activity ?? {};
+	const attempts = op.liquidation_attempts_24h ?? 0;
+	const wins     = op.liquidations_won_24h ?? 0;
+	const winRate  = op.win_rate_24h;
+
+	const elAttempts = document.getElementById('op-attempts');
+	elAttempts.textContent = fmtNum(attempts);
+	elAttempts.className = 'op-value ' + (attempts > 0 ? 'good' : 'warn');
+	document.getElementById('op-attempts-sub').textContent =
+		`7d: ${fmtNum(op.liquidation_attempts_7d ?? 0)}`;
+
+	const elWins = document.getElementById('op-wins');
+	elWins.textContent = fmtNum(wins);
+	elWins.className = 'op-value ' + (wins > 0 ? 'good' : '');
+	document.getElementById('op-wins-sub').textContent =
+		winRate != null ? `win rate ${(winRate * 100).toFixed(1)}%` : 'win rate —';
+
+	const elBuilder = document.getElementById('op-builder');
+	elBuilder.textContent = fmtNum(op.builder_blocks_landed_24h ?? 0);
+	elBuilder.className = 'op-value ' + ((op.builder_blocks_landed_24h ?? 0) > 0 ? 'good' : 'warn');
+	document.getElementById('op-builder-sub').textContent =
+		`7d / 30d: ${fmtNum(op.builder_blocks_landed_7d ?? 0)} / ${fmtNum(op.builder_blocks_landed_30d ?? 0)}`;
+
+	const fresh = op.data_freshness ?? {};
+	const elSnap = document.getElementById('op-snap-age');
+	elSnap.textContent = fmtAge(fresh.latest_borrower_snapshot_age_s);
+	elSnap.className   = 'op-value mono-sm ' + freshnessClass(fresh.latest_borrower_snapshot_age_s, 'continuous');
+
+	const elShadow = document.getElementById('op-shadow-age');
+	elShadow.textContent = fmtAge(fresh.shadow_blocks_age_s);
+	elShadow.className   = 'op-value mono-sm ' + freshnessClass(fresh.shadow_blocks_age_s, 'slot');
+
+	const elExec = document.getElementById('op-exec-age');
+	elExec.textContent = fmtAge(fresh.latest_execution_age_s);
+	elExec.className   = 'op-value mono-sm ' + freshnessClass(fresh.latest_execution_age_s, 'sporadic');
 }
 
 function renderHfHistogram(d) {
@@ -461,6 +582,7 @@ async function refresh() {
 		const d = await r.json();
 		lastOverview = d;
 		renderKpis(d);
+		renderOperator(d);
 		renderHfHistogram(d);
 		renderBuilders(d);
 		renderTopAtRisk(d);

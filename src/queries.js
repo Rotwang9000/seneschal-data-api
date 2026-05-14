@@ -893,6 +893,26 @@ export async function getStatsOverview(db, params = {}) {
 		FROM missed_liquidations WHERE timestamp >= ?
 	`).get(cutoff24h);
 
+	// Seneschal's own activity over the last 24h. Counts only — we
+	// deliberately do NOT expose total profit in USD or strategy
+	// labels because those are operator-private. The intent is a
+	// "is the bot doing its job?" signal that operators (and curious
+	// outsiders) can see without revealing how much money is at stake.
+	const ourExec24h = db.prepare(`
+		SELECT
+			COUNT(*)                                     AS attempts,
+			COALESCE(SUM(CASE WHEN success=1 THEN 1 ELSE 0 END), 0) AS successes
+		FROM executions
+		WHERE timestamp >= ?
+	`).get(cutoff24h);
+	const ourExec7d = db.prepare(`
+		SELECT
+			COUNT(*)                                     AS attempts,
+			COALESCE(SUM(CASE WHEN success=1 THEN 1 ELSE 0 END), 0) AS successes
+		FROM executions
+		WHERE timestamp >= ?
+	`).get(now - 7 * 24 * 60 * 60 * 1000);
+
 	// At-risk count — anything with HF below 1.05. Aave straight from
 	// snapshots; Morpho synthesised from ltv/lltv.
 	const aaveAtRisk = db.prepare(`
@@ -910,10 +930,24 @@ export async function getStatsOverview(db, params = {}) {
 	// Builder leaderboard for multiple windows so the dashboard can
 	// show trend without persisted history (24h vs 7d delta).
 	const [share24h, share7d, share30d] = await Promise.all([
-		getBuilderLeaderboard({ window: '24h', limit: 8, _shadowPath: shadowPath, _ttlMs: ttlMs }),
-		getBuilderLeaderboard({ window: '7d',  limit: 8, _shadowPath: shadowPath, _ttlMs: ttlMs }),
-		getBuilderLeaderboard({ window: '30d', limit: 8, _shadowPath: shadowPath, _ttlMs: ttlMs })
+		getBuilderLeaderboard({ window: '24h', limit: 50, _shadowPath: shadowPath, _ttlMs: ttlMs }),
+		getBuilderLeaderboard({ window: '7d',  limit: 50, _shadowPath: shadowPath, _ttlMs: ttlMs }),
+		getBuilderLeaderboard({ window: '30d', limit: 50, _shadowPath: shadowPath, _ttlMs: ttlMs })
 	]);
+
+	// Find Seneschal's own row in each window so the operator activity
+	// panel can show "our blocks landed". Matched on the builder label
+	// produced by getBuilderLeaderboard (which normalises extra_data
+	// and known coinbase addresses to a clean display string).
+	const findSelf = (builders) =>
+		builders.find(b => /^seneschal/i.test(b.builder)) ?? { builder: 'seneschal', slots_won: 0, captured_eth: 0 };
+	const selfBuilder24h = findSelf(share24h.builders);
+	const selfBuilder7d  = findSelf(share7d.builders);
+	const selfBuilder30d = findSelf(share30d.builders);
+	// Trim the public leaderboard slice back to top 8 for the donut.
+	share24h.builders = share24h.builders.slice(0, 8);
+	share7d.builders  = share7d.builders.slice(0, 8);
+	share30d.builders = share30d.builders.slice(0, 8);
 
 	// Recent on-chain liquidations (last 24h) — the dashboard renders
 	// this as a feed.
@@ -921,6 +955,27 @@ export async function getStatsOverview(db, params = {}) {
 		since_ms: now - 24 * 60 * 60 * 1000,
 		limit: 20
 	});
+
+	// File mtimes for the freshness panel. None of these reveal data
+	// content; they're just "yes, the writer is alive" indicators.
+	const freshness = {
+		shadow_blocks_age_s: fileMtimeMs(shadowPath)
+			? Math.round((now - fileMtimeMs(shadowPath)) / 1000) : null,
+		spark_borrowers_age_s: fileMtimeMs(params._sparkPath)
+			? Math.round((now - fileMtimeMs(params._sparkPath)) / 1000) : null,
+		latest_borrower_snapshot_age_s: (() => {
+			const r = db.prepare(`SELECT max(last_seen_ts) AS t FROM borrower_snapshots`).get();
+			return r?.t ? Math.round((now - r.t) / 1000) : null;
+		})(),
+		latest_execution_age_s: (() => {
+			const r = db.prepare(`SELECT max(timestamp) AS t FROM executions`).get();
+			return r?.t ? Math.round((now - r.t) / 1000) : null;
+		})(),
+		latest_missed_liquidation_age_s: (() => {
+			const r = db.prepare(`SELECT max(timestamp) AS t FROM missed_liquidations`).get();
+			return r?.t ? Math.round((now - r.t) / 1000) : null;
+		})()
+	};
 
 	return {
 		as_of_ms: now,
@@ -937,6 +992,22 @@ export async function getStatsOverview(db, params = {}) {
 			at_risk_morpho_count: morphoAtRiskCount,
 			liquidations_24h_count: liqs24h.count,
 			liquidations_24h_debt_usd: liqs24h.debt_usd
+		},
+		// "Are we actually working?" panel. Counts only — never profit.
+		// All numbers here are derivable from on-chain data anyway, so
+		// publishing them gives no edge to competitors but reassures the
+		// operator that the bot is doing its job.
+		operator_activity: {
+			liquidation_attempts_24h: ourExec24h.attempts,
+			liquidations_won_24h:     ourExec24h.successes,
+			win_rate_24h: ourExec24h.attempts > 0
+				? ourExec24h.successes / ourExec24h.attempts : null,
+			liquidation_attempts_7d:  ourExec7d.attempts,
+			liquidations_won_7d:      ourExec7d.successes,
+			builder_blocks_landed_24h: selfBuilder24h.slots_won ?? 0,
+			builder_blocks_landed_7d:  selfBuilder7d.slots_won ?? 0,
+			builder_blocks_landed_30d: selfBuilder30d.slots_won ?? 0,
+			data_freshness: freshness
 		},
 		totals,
 		aave_aggregate: aaveAggregate,

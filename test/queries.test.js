@@ -381,12 +381,30 @@ describe('getStatsOverview', () => {
 			_ttlMs: 1
 		});
 		expect(r.kpis).toBeDefined();
-		// 3 Aave + 1 Morpho fixture rows.
 		expect(r.kpis.positions_tracked).toBe(4);
-		// ADDR_A HF 0.98 + ADDR_B HF 1.04 both < 1.05; Morpho HF ~1.0488 also < 1.05.
 		expect(r.kpis.at_risk_count).toBeGreaterThanOrEqual(2);
 		expect(typeof r.kpis.aave_debt_under_watch_usd).toBe('number');
 		expect(typeof r.kpis.liquidations_24h_count).toBe('number');
+	});
+
+	test('operator_activity block exposes counts only — no profit fields', async () => {
+		_resetLeaderboardCacheForTest();
+		const r = await getStatsOverview(db, {
+			_shadowPath: shadowPath,
+			_sparkPath: sparkPath,
+			_ttlMs: 1
+		});
+		const op = r.operator_activity;
+		expect(op).toBeDefined();
+		expect(typeof op.liquidation_attempts_24h).toBe('number');
+		expect(typeof op.liquidations_won_24h).toBe('number');
+		expect(typeof op.builder_blocks_landed_24h).toBe('number');
+		expect(op.data_freshness).toBeDefined();
+		// Strictly no profit / strategy keys.
+		const json = JSON.stringify(op);
+		expect(json).not.toMatch(/profit/i);
+		expect(json).not.toMatch(/strategy/i);
+		expect(json).not.toMatch(/gas_used/i);
 	});
 
 	test('Morpho rows in top_at_risk have null debt_usd', async () => {

@@ -25,11 +25,14 @@ describe('FLASHLOAN_PROVIDERS catalogue', () => {
 		}
 	});
 
-	test('FlashBank is included with the documented fee', () => {
+	test('FlashBank is included with the documented fee + LP path', () => {
 		const fb = FLASHLOAN_PROVIDERS.find(p => p.id === 'flashbank');
 		expect(fb).toBeDefined();
 		expect(fb.fee_bps).toBe(2);
 		expect(fb.docs).toContain('flashbank.net');
+		expect(fb.lp_path).toBeDefined();
+		expect(Array.isArray(fb.lp_path.steps)).toBe(true);
+		expect(fb.lp_path.steps.length).toBeGreaterThanOrEqual(3);
 	});
 
 	test('catalogue is frozen — accidental mutation is forbidden', () => {

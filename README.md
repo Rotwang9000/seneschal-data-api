@@ -53,8 +53,8 @@ Nine tools become available to your agent:
 | `seneschal_get_borrower`             | Latest state of one borrower across protocols                        |
 | `seneschal_get_borrower_history`     | Time-series health-factor traces                                     |
 | `seneschal_builder_leaderboard`      | Ethereum builder market share (24h, 7d, 30d, all-time)               |
-| `seneschal_stats_overview`           | Aggregate snapshot powering the public dashboard                     |
-| `seneschal_flashloan_providers`      | Curated catalogue of mainnet flash-loan providers                    |
+| `seneschal_stats_overview`           | Aggregate snapshot powering the public dashboard, incl. operator activity (counts only — no profit fields) |
+| `seneschal_flashloan_providers`      | Curated catalogue of mainnet flash-loan providers, incl. LP-side commit-capital paths where applicable     |
 
 ## REST endpoints
 
@@ -123,10 +123,11 @@ producing the same shapes you can point this server at it.
 npm test
 ```
 
-45 jest tests covering the query layer (in-memory SQLite fixtures), the
+75 jest tests covering the query layer (in-memory SQLite fixtures), the
 Fastify REST routes (via `fastify.inject`), and the MCP server (both
 in-process via `InMemoryTransport` and end-to-end via
-`StreamableHTTPClientTransport`).
+`StreamableHTTPClientTransport`). Plus `test/live-smoke.mjs` which
+exercises the live `mcp.seneschal.space` endpoint over Streamable HTTP.
 
 ## Architecture
 
