@@ -205,6 +205,43 @@ export function buildMcpServer(options = {}) {
 	return server;
 }
 
+// Static server card for registries that prefer not to (or can't)
+// auto-scan via Streamable HTTP — e.g. Smithery's fallback path
+// described in https://smithery.ai/docs/build/publish#server-scanning,
+// and SEP-1649 well-known discovery.
+//
+// Kept in sync with registerTools() by reading the tool definitions
+// from the server instance at startup. The Caddy layer serves this at
+// /.well-known/mcp/server-card.json on mcp.seneschal.space.
+export function getStaticServerCard() {
+	return {
+		serverInfo: {
+			name: 'Seneschal Data API',
+			version: '0.1.0',
+			vendor: 'Seneschal',
+			homepage: 'https://seneschal.space'
+		},
+		authentication: { required: false },
+		transport: {
+			type: 'streamable-http',
+			url: 'https://mcp.seneschal.space/'
+		},
+		tools: [
+			{ name: 'seneschal_health', description: 'Service liveness plus row counts and data-source mtimes.' },
+			{ name: 'seneschal_list_at_risk_borrowers', description: 'Borrowers across Aave/Morpho/Spark below max_hf, sorted ascending.' },
+			{ name: 'seneschal_list_borrowers', description: 'Generic discovery surface with HF + debt range filters, sort, offset.' },
+			{ name: 'seneschal_recent_liquidations', description: 'Recent on-chain liquidation events.' },
+			{ name: 'seneschal_get_borrower', description: 'Latest snapshot for one borrower across protocols.' },
+			{ name: 'seneschal_get_borrower_history', description: 'Time-series HF traces for one borrower.' },
+			{ name: 'seneschal_builder_leaderboard', description: 'Ground-truth Ethereum builder market share.' },
+			{ name: 'seneschal_stats_overview', description: 'Aggregate snapshot powering the public stats dashboard.' },
+			{ name: 'seneschal_flashloan_providers', description: 'Curated catalogue of mainnet flash-loan providers including FlashBank.' }
+		],
+		resources: [],
+		prompts: []
+	};
+}
+
 // HTTP listener creating a fresh stateless transport per request.
 // This is the recommended pattern from the MCP SDK docs for stateless
 // public servers — no session affinity required, trivial to put
@@ -229,6 +266,18 @@ export function startMcpHttpServer(options = {}) {
 		// Built-in health (Caddy probes / monitoring).
 		if (req.url === '/health' && req.method === 'GET') {
 			res.writeHead(200, { 'content-type': 'text/plain' }).end('ok');
+			return;
+		}
+
+		// MCP discovery via SEP-1649 static server card. Used by
+		// registry scanners (Smithery, Glama, etc.) that don't want to
+		// run a full MCP initialize() to enumerate tools.
+		if (req.url === '/.well-known/mcp/server-card.json' && req.method === 'GET') {
+			res.writeHead(200, {
+				'content-type': 'application/json',
+				'cache-control': 'public, max-age=300'
+			});
+			res.end(JSON.stringify(getStaticServerCard(), null, '\t'));
 			return;
 		}
 

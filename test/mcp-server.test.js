@@ -191,4 +191,17 @@ describe('end-to-end HTTP transport', () => {
 		const body = await r.json();
 		expect(body.error.code).toBeDefined();
 	});
+
+	test('GET /.well-known/mcp/server-card.json serves the static card', async () => {
+		const r = await fetch(`http://127.0.0.1:${serverPort}/.well-known/mcp/server-card.json`);
+		expect(r.status).toBe(200);
+		expect(r.headers.get('content-type')).toContain('application/json');
+		const body = await r.json();
+		expect(body.serverInfo.name).toMatch(/Seneschal/i);
+		expect(body.transport.type).toBe('streamable-http');
+		expect(body.authentication.required).toBe(false);
+		const toolNames = body.tools.map(t => t.name).sort();
+		expect(toolNames).toContain('seneschal_flashloan_providers');
+		expect(toolNames).toContain('seneschal_stats_overview');
+	});
 });
