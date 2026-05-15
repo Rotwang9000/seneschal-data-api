@@ -376,6 +376,12 @@ export function recentLiquidations(db, params = {}) {
 	// `strategy` typically looks like 'aave_liquidation', 'morpho_…' etc.
 	// so a `LIKE protocol||'%'` filter routes the user's `protocol` to
 	// matching landings.
+	//
+	// `success=1 AND tx_hash looks real` — see the comment in
+	// getStatsOverview's operator_activity block for why the tx_hash
+	// predicate is non-negotiable: a writer-side arg-misalignment used
+	// to set success=1 on no-tx skip rows. We've since fixed the writer,
+	// but the dashboard must remain robust against any future regression.
 	const landings = protocol
 		? db.prepare(`
 			SELECT timestamp, block_number, strategy, borrower_address,
@@ -383,6 +389,9 @@ export function recentLiquidations(db, params = {}) {
 			FROM executions
 			WHERE timestamp >= ?
 			  AND success = 1
+			  AND tx_hash IS NOT NULL
+			  AND tx_hash LIKE '0x%'
+			  AND length(tx_hash) = 66
 			  AND strategy LIKE ?
 			ORDER BY timestamp DESC
 			LIMIT ?
@@ -393,6 +402,9 @@ export function recentLiquidations(db, params = {}) {
 			FROM executions
 			WHERE timestamp >= ?
 			  AND success = 1
+			  AND tx_hash IS NOT NULL
+			  AND tx_hash LIKE '0x%'
+			  AND length(tx_hash) = 66
 			ORDER BY timestamp DESC
 			LIMIT ?
 		`).all(sinceMs, limit);
@@ -792,7 +804,12 @@ const HF_BUCKETS = Object.freeze([
 export async function getStatsOverview(db, params = {}) {
 	const shadowPath = params._shadowPath ?? '/opt/mevbot/data/shadow-blocks.jsonl';
 	const ttlMs = params._ttlMs ?? 60_000;
-	const now = Date.now();
+	// Test-injection seam: tests pass fixture rows with timestamps far
+	// in the past, so they pass `_nowMs` (and optionally `_windowMs`) to
+	// shift the 24h cutoff onto the fixture. Production always reads
+	// the real wall clock.
+	const now = params._nowMs ?? Date.now();
+	const windowMs = params._windowMs ?? (24 * 60 * 60 * 1000);
 
 	// Cheap row counts — same trick as getHealth: O(log n) via max(rowid).
 	const tableSize = (table) => {
@@ -874,7 +891,7 @@ export async function getStatsOverview(db, params = {}) {
 	// is only ~2.4K rows so a date-aggregated query is cheap; the
 	// timestamp index makes the range scan fast.
 	const cutoff30d = now - 30 * 24 * 60 * 60 * 1000;
-	const cutoff24h = now - 24 * 60 * 60 * 1000;
+	const cutoff24h = now - windowMs;
 	const liqsPerDay = db.prepare(`
 		SELECT
 			CAST((timestamp - (timestamp % 86400000)) AS INTEGER) AS day_ms,
@@ -898,19 +915,44 @@ export async function getStatsOverview(db, params = {}) {
 	// labels because those are operator-private. The intent is a
 	// "is the bot doing its job?" signal that operators (and curious
 	// outsiders) can see without revealing how much money is at stake.
+	//
+	// IMPORTANT — three layers of "honest counting":
+	//
+	// (a) Attempts = COUNT(DISTINCT tx_hash) over rows where tx_hash
+	//     looks like a real on-chain hash (`0x` + 64 hex chars). The
+	//     bot writes a row per outcome (submit, timeout, missed, failed)
+	//     for each bundle, so a naive COUNT(*) double- or triple-counts
+	//     every single attempt. Distinct tx_hash collapses these back
+	//     to one row per pursued opportunity.
+	//
+	// (b) Skipped decisions ('aave_low_gas_skip', 'aave_preflight_*',
+	//     'aave_gas_budget_rejected', 'aave_revalidation_skip') don't
+	//     have a tx_hash at all and are excluded — those are "we looked
+	//     and decided not to fire", not attempts.
+	//
+	// (c) Wins require BOTH success=1 AND a real tx_hash. A historical
+	//     writer bug (since fixed) flipped success=1 on no-tx rows when
+	//     the call-site packed positional args tightly and misaligned
+	//     the success column with a string value. Even after the writer
+	//     fix, we keep the tx_hash predicate as defence-in-depth.
+	const REAL_TX = `tx_hash IS NOT NULL
+		AND tx_hash LIKE '0x%'
+		AND length(tx_hash) = 66`;
 	const ourExec24h = db.prepare(`
 		SELECT
-			COUNT(*)                                     AS attempts,
-			COALESCE(SUM(CASE WHEN success=1 THEN 1 ELSE 0 END), 0) AS successes
+			COUNT(DISTINCT tx_hash) AS attempts,
+			COUNT(DISTINCT CASE WHEN success=1 THEN tx_hash END) AS successes
 		FROM executions
 		WHERE timestamp >= ?
+		  AND ${REAL_TX}
 	`).get(cutoff24h);
 	const ourExec7d = db.prepare(`
 		SELECT
-			COUNT(*)                                     AS attempts,
-			COALESCE(SUM(CASE WHEN success=1 THEN 1 ELSE 0 END), 0) AS successes
+			COUNT(DISTINCT tx_hash) AS attempts,
+			COUNT(DISTINCT CASE WHEN success=1 THEN tx_hash END) AS successes
 		FROM executions
 		WHERE timestamp >= ?
+		  AND ${REAL_TX}
 	`).get(now - 7 * 24 * 60 * 60 * 1000);
 
 	// At-risk count — anything with HF below 1.05. Aave straight from

@@ -74,6 +74,14 @@ beforeAll(() => {
 		);
 	}
 
+	// A 66-char `0x…` hash is a real on-chain tx hash. The fixtures use
+	// these so the operator_activity SQL (which requires
+	// length(tx_hash)=66 to defend against writer-side junk) counts them.
+	const FAKE_MISSED_HASH = '0x' + 'a'.repeat(64);
+	const FAKE_LANDED_HASH = '0x' + 'b'.repeat(64);
+	const FAKE_NO_TX_HASH  = '0'; // simulates the historical writer bug
+	const FAKE_LIQ_ADDR    = '0x' + 'c'.repeat(40);
+
 	db.prepare(`
 		INSERT INTO missed_liquidations
 			(tx_hash, timestamp, block_number, borrower_address,
@@ -81,17 +89,28 @@ beforeAll(() => {
 			 debt_to_cover, liquidated_collateral, debt_usd,
 			 was_tracking, would_have_been_profitable)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-	`).run('0xtx1', 1_700_000_010_000, 25_000_010, ADDR_A,
-		'0xliquidator', 'USDC', 'WETH',
+	`).run(FAKE_MISSED_HASH, 1_700_000_010_000, 25_000_010, ADDR_A,
+		FAKE_LIQ_ADDR, 'USDC', 'WETH',
 		'50000000000', '1000000000000000000', 50000, 1, 1);
 
+	// One genuine landing with a real-looking 66-char tx hash.
 	db.prepare(`
 		INSERT INTO executions
 			(timestamp, block_number, strategy, borrower_address, tx_hash, success,
 			 actual_profit_usd, gas_used_usd)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 	`).run(1_700_000_020_000, 25_000_020, 'aave_liquidation', ADDR_C,
-		'0xtx2', 1, 300, 12.5);
+		FAKE_LANDED_HASH, 1, 300, 12.5);
+
+	// One phantom "win" from the historical writer arg-misalignment bug:
+	// success=1 with tx_hash='0'. The query MUST exclude this.
+	db.prepare(`
+		INSERT INTO executions
+			(timestamp, block_number, strategy, borrower_address, tx_hash, success,
+			 actual_profit_usd, gas_used_usd)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+	`).run(1_700_000_021_000, 25_000_021, 'aave_gas_budget_rejected', ADDR_A,
+		FAKE_NO_TX_HASH, 1, null, null);
 
 	// Disk fixtures for spark JSON and shadow-blocks JSONL.
 	tmpRoot = join(tmpdir(), `seneschal-test-${Date.now()}-${process.pid}`);
@@ -405,6 +424,26 @@ describe('getStatsOverview', () => {
 		expect(json).not.toMatch(/profit/i);
 		expect(json).not.toMatch(/strategy/i);
 		expect(json).not.toMatch(/gas_used/i);
+	});
+
+	test('operator_activity ignores phantom-win rows (tx_hash="0", success=1)', async () => {
+		// The fixture inserts ONE genuine landing and ONE phantom row
+		// produced by the historical writer arg-misalignment bug. Honest
+		// counting must yield exactly 1 win, not 2.
+		_resetLeaderboardCacheForTest();
+		// Make the cutoff window wide enough to include the fixture
+		// timestamps (year 2023). The default 24h/7d window misses them.
+		const r = await getStatsOverview(db, {
+			_shadowPath: shadowPath,
+			_sparkPath: sparkPath,
+			_ttlMs: 1,
+			_nowMs: 1_700_000_100_000,
+			_windowMs: 200_000
+		});
+		const op = r.operator_activity;
+		// One genuine landing in the fixture — phantom row excluded.
+		expect(op.liquidations_won_24h).toBe(1);
+		expect(op.liquidation_attempts_24h).toBe(1);
 	});
 
 	test('Morpho rows in top_at_risk have null debt_usd', async () => {
