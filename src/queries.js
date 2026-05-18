@@ -14,7 +14,7 @@
 import { createReadStream, existsSync } from 'node:fs';
 import { createInterface } from 'node:readline';
 
-import {
+import config, {
 	DEFAULT_LIMIT,
 	MAX_LIMIT,
 	DEFAULT_HISTORY_GRANULARITY,
@@ -1073,7 +1073,33 @@ export async function getStatsOverview(db, params = {}) {
 			total_slots_7d:  share7d.total_slots,
 			total_slots_30d: share30d.total_slots
 		},
-		recent_liquidations: recent24h.results.slice(0, 10)
+		recent_liquidations: recent24h.results.slice(0, 10),
+		// Optional "Support development" panel. Each chain only renders
+		// when its env-driven address is non-empty, so the panel stays
+		// invisible by default. No revenue here is captured automatically:
+		// these are direct tip addresses, set via SENESCHAL_DONATE_ETH /
+		// _BTC / _GITHUB on the data-api service.
+		support: getSupportBlock()
+	};
+}
+
+// Built once-per-call rather than memoised because the config values
+// are frozen at process start anyway, so the cost is negligible and
+// it keeps tests deterministic when they inject overrides via env.
+function getSupportBlock() {
+	const eth = (config.donateEth || '').trim();
+	const btc = (config.donateBtc || '').trim();
+	const github = (config.donateGithub || '').trim();
+	const message = config.donateMessage || '';
+	const enabled = Boolean(eth || btc || github);
+	return {
+		enabled,
+		message: enabled ? message : null,
+		addresses: {
+			ethereum: eth || null,
+			bitcoin: btc || null
+		},
+		github_sponsors_url: github || null
 	};
 }
 

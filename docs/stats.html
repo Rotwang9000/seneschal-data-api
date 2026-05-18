@@ -261,6 +261,13 @@ footer a { color: var(--muted) }
 		</div>
 	</div>
 
+	<!-- Support development -->
+	<div id="support-panel" class="panel span-12" style="display:none">
+		<h2>Support development</h2>
+		<p id="support-message" style="color: var(--muted); margin-top: 0"></p>
+		<div id="support-addresses" style="display:flex; flex-wrap: wrap; gap: 1em; margin-top: 0.8em"></div>
+	</div>
+
 </div>
 
 <footer>
@@ -573,6 +580,51 @@ function renderRecentLiq(d) {
 	`).join('');
 }
 
+function renderSupport(d) {
+	const panel = document.getElementById('support-panel');
+	const s = d.support;
+	if (!s || !s.enabled) {
+		panel.style.display = 'none';
+		return;
+	}
+	panel.style.display = '';
+	document.getElementById('support-message').textContent = s.message || '';
+	const cells = [];
+	if (s.addresses.ethereum) {
+		cells.push(`
+			<div class="tile" style="flex:1; min-width: 280px">
+				<div class="kpi-label">Ethereum / EVM</div>
+				<div style="word-break: break-all; font-family: monospace; font-size: 0.92em">${escapeHtml(s.addresses.ethereum)}</div>
+				<div class="kpi-sub">Any EVM chain (Base, Arbitrum, Optimism etc.) — same address.</div>
+			</div>
+		`);
+	}
+	if (s.addresses.bitcoin) {
+		cells.push(`
+			<div class="tile" style="flex:1; min-width: 280px">
+				<div class="kpi-label">Bitcoin</div>
+				<div style="word-break: break-all; font-family: monospace; font-size: 0.92em">${escapeHtml(s.addresses.bitcoin)}</div>
+			</div>
+		`);
+	}
+	if (s.github_sponsors_url) {
+		cells.push(`
+			<div class="tile" style="flex:1; min-width: 280px">
+				<div class="kpi-label">GitHub Sponsors</div>
+				<div><a href="${escapeHtml(s.github_sponsors_url)}" target="_blank" rel="noopener">Sponsor on GitHub</a></div>
+				<div class="kpi-sub">Recurring or one-off.</div>
+			</div>
+		`);
+	}
+	document.getElementById('support-addresses').innerHTML = cells.join('');
+}
+
+function escapeHtml(s) {
+	return String(s).replace(/[&<>"']/g, c => ({
+		'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+	}[c]));
+}
+
 // ── data fetch + render orchestration ─────────────────────
 async function refresh() {
 	setStatus('loading', 'refreshing…');
@@ -588,6 +640,7 @@ async function refresh() {
 		renderTopAtRisk(d);
 		renderLiqDaily(d);
 		renderRecentLiq(d);
+		renderSupport(d);
 		clearError();
 		const ts = new Date(d.as_of_ms);
 		setStatus('', `updated ${ts.toLocaleTimeString()}`);

@@ -459,6 +459,24 @@ describe('getStatsOverview', () => {
 		}
 	});
 
+	test('support block defaults to disabled when no donation envs set', async () => {
+		// Tests run with a clean env (jest.config sets up via dotenv with
+		// SENESCHAL_DONATE_* unset). When the operator hasn't opted in,
+		// the panel must stay invisible — frontend depends on `enabled`.
+		_resetLeaderboardCacheForTest();
+		const r = await getStatsOverview(db, {
+			_shadowPath: shadowPath,
+			_sparkPath: sparkPath,
+			_ttlMs: 1
+		});
+		expect(r.support).toBeDefined();
+		expect(r.support.enabled).toBe(false);
+		expect(r.support.addresses.ethereum).toBeNull();
+		expect(r.support.addresses.bitcoin).toBeNull();
+		expect(r.support.github_sponsors_url).toBeNull();
+		expect(r.support.message).toBeNull();
+	});
+
 	test('histogram has no morpho_debt_usd field', async () => {
 		_resetLeaderboardCacheForTest();
 		const r = await getStatsOverview(db, {

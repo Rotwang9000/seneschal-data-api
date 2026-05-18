@@ -50,7 +50,15 @@ export const config = Object.freeze({
 	rateLimitTimeWindowMs: 60_000,
 	// API version stamped into responses.
 	apiVersion: '0.1.0',
-	serviceName: 'Seneschal Data API'
+	serviceName: 'Seneschal Data API',
+	// Optional donation addresses. If set, the stats dashboard renders a
+	// discreet "Support development" panel. Empty values are hidden by the
+	// frontend so this stays out of the public surface unless the operator
+	// opts in. Multiple chains supported for tipper convenience.
+	donateEth: asString('SENESCHAL_DONATE_ETH', ''),
+	donateBtc: asString('SENESCHAL_DONATE_BTC', ''),
+	donateGithub: asString('SENESCHAL_DONATE_GITHUB', ''),
+	donateMessage: asString('SENESCHAL_DONATE_MESSAGE', 'Seneschal runs on a single Helsinki box. Tips keep it online.')
 });
 
 export default config;
