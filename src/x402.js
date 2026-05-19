@@ -142,6 +142,12 @@ export async function registerX402(app, x402Cfg) {
 	]);
 	const facilitatorClient = new HTTPFacilitatorClient({ url: x402Cfg.facilitatorUrl });
 	const schemes = [{ network: x402Cfg.network, server: new ExactEvmScheme() }];
+	// `syncFacilitatorOnStart: true` is required — it fetches the
+	// /supported manifest from the facilitator so the resource server
+	// knows which (scheme, network) tuples it can issue
+	// PaymentRequirements for. Without it the middleware throws on
+	// the first 402-eligible request: "Facilitator does not support
+	// exact on eip155:8453".
 	paymentMiddlewareFromConfig(
 		app,
 		x402Cfg.routes,
@@ -149,7 +155,7 @@ export async function registerX402(app, x402Cfg) {
 		schemes,
 		/* paywallConfig */ undefined,
 		/* paywall */ undefined,
-		/* syncFacilitatorOnStart */ false
+		/* syncFacilitatorOnStart */ true
 	);
 }
 

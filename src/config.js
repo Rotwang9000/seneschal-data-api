@@ -72,7 +72,13 @@ export const config = Object.freeze({
 	x402Enabled: asString('X402_ENABLED', '') === '1',
 	x402Network: asString('X402_NETWORK', 'eip155:8453'),
 	x402RecipientAddress: asString('X402_RECIPIENT_ADDRESS', ''),
-	x402FacilitatorUrl: asString('X402_FACILITATOR_URL', 'https://x402.org/facilitator'),
+	// Mainnet facilitator. The public x402.org/facilitator only services
+	// testnets (Base Sepolia / Solana Devnet / etc.) — using it on
+	// eip155:8453 yields "Facilitator does not support exact" at boot.
+	// OpenX402 is permissionless, no API key, supports Base mainnet
+	// USDC with proper EIP-712 metadata. Override at any time via
+	// X402_FACILITATOR_URL.
+	x402FacilitatorUrl: asString('X402_FACILITATOR_URL', 'https://facilitator.openx402.ai'),
 	// Price per call for each premium endpoint, expressed in the x402
 	// Money format ("$0.05" = 5 ¢). The facilitator quotes the USDC
 	// atomic amount on Base from this.
