@@ -93,6 +93,8 @@ describe('in-process tool surface', () => {
 			'seneschal_health',
 			'seneschal_list_at_risk_borrowers',
 			'seneschal_list_borrowers',
+			'seneschal_paywall_info',
+			'seneschal_premium_opportunities',
 			'seneschal_recent_liquidations',
 			'seneschal_stats_overview'
 		]);

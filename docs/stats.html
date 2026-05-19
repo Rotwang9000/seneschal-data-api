@@ -261,6 +261,13 @@ footer a { color: var(--muted) }
 		</div>
 	</div>
 
+	<!-- Premium tier (x402 paywall) -->
+	<div id="premium-panel" class="panel span-12" style="display:none">
+		<h2>Premium tier — pay-per-call</h2>
+		<p id="premium-blurb" style="color: var(--muted); margin-top: 0"></p>
+		<div id="premium-details" style="display:flex; flex-wrap: wrap; gap: 1em; margin-top: 0.8em; font-size: 0.95em"></div>
+	</div>
+
 	<!-- Support development -->
 	<div id="support-panel" class="panel span-12" style="display:none">
 		<h2>Support development</h2>
@@ -580,6 +587,41 @@ function renderRecentLiq(d) {
 	`).join('');
 }
 
+function renderPremium(d) {
+	const panel = document.getElementById('premium-panel');
+	const p = d.premium_tier;
+	if (!p || !p.enabled) {
+		panel.style.display = 'none';
+		return;
+	}
+	panel.style.display = '';
+	document.getElementById('premium-blurb').textContent = p.blurb
+		|| 'Pay-per-call x402 micropayment unlocks the uncapped opportunity feed plus realised market intel.';
+	const cells = [];
+	cells.push(`
+		<div class="tile" style="flex:1; min-width: 240px">
+			<div class="kpi-label">Price per call</div>
+			<div style="font-size: 1.4em; font-weight: 600">${escapeHtml(p.price_per_call || '$0.05')}</div>
+			<div class="kpi-sub">USDC on ${escapeHtml((p.network || 'eip155:8453').replace('eip155:8453', 'Base mainnet'))}</div>
+		</div>
+	`);
+	cells.push(`
+		<div class="tile" style="flex:2; min-width: 320px">
+			<div class="kpi-label">Endpoint</div>
+			<div style="word-break: break-all; font-family: monospace; font-size: 0.9em">GET ${escapeHtml(p.endpoint || '')}</div>
+			<div class="kpi-sub">x402 spec: <a href="${escapeHtml(p.docs || 'https://docs.x402.org')}" target="_blank" rel="noopener">docs.x402.org</a> · MCP tool: <code>${escapeHtml(p.mcp_tool || 'seneschal_premium_opportunities')}</code></div>
+		</div>
+	`);
+	cells.push(`
+		<div class="tile" style="flex:1; min-width: 240px">
+			<div class="kpi-label">Recipient</div>
+			<div style="word-break: break-all; font-family: monospace; font-size: 0.88em">${escapeHtml(p.payTo || '')}</div>
+			<div class="kpi-sub">EIP-3009 transferWithAuthorization — gasless for the payer.</div>
+		</div>
+	`);
+	document.getElementById('premium-details').innerHTML = cells.join('');
+}
+
 function renderSupport(d) {
 	const panel = document.getElementById('support-panel');
 	const s = d.support;
@@ -640,6 +682,7 @@ async function refresh() {
 		renderTopAtRisk(d);
 		renderLiqDaily(d);
 		renderRecentLiq(d);
+		renderPremium(d);
 		renderSupport(d);
 		clearError();
 		const ts = new Date(d.as_of_ms);

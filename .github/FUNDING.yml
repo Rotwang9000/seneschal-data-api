@@ -1,0 +1,12 @@
+# Configure the Sponsor button at the top of the GitHub repo. The
+# data-api lives on a single Helsinki box and is free to use; tips
+# keep it lit. Per-call agent payments via x402 are the preferred
+# revenue path — see /v1/paywall on the live service for the
+# machine-readable price + recipient.
+
+github: [Rotwang9000]
+# Add the operator's ENS / 0x address(es) below once a dedicated
+# donation wallet is provisioned. We intentionally don't list the
+# bot's executor wallets here because those keys are hot.
+custom:
+  - 'https://api.seneschal.space/v1/paywall'

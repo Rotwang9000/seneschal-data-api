@@ -1079,7 +1079,14 @@ export async function getStatsOverview(db, params = {}) {
 		// invisible by default. No revenue here is captured automatically:
 		// these are direct tip addresses, set via SENESCHAL_DONATE_ETH /
 		// _BTC / _GITHUB on the data-api service.
-		support: getSupportBlock()
+		support: getSupportBlock(),
+		// Optional "Premium tier" panel. Surfaces the x402 paywall
+		// metadata (network, recipient, per-call price) so agents and
+		// humans alike can see that paid endpoints exist. Whether the
+		// dashboard renders this is decided by the frontend; the
+		// backend simply exposes the data when X402_RECIPIENT_ADDRESS
+		// is set.
+		premium_tier: getPremiumTierBlock()
 	};
 }
 
@@ -1100,6 +1107,25 @@ function getSupportBlock() {
 			bitcoin: btc || null
 		},
 		github_sponsors_url: github || null
+	};
+}
+
+function getPremiumTierBlock() {
+	const enabled = config.x402Enabled || Boolean((config.x402RecipientAddress || '').trim());
+	if (!enabled) {
+		return { enabled: false };
+	}
+	const recipient = (config.x402RecipientAddress || '').trim();
+	return {
+		enabled: true,
+		protocol: 'x402',
+		network: config.x402Network,
+		payTo: recipient,
+		price_per_call: config.x402FeedPrice,
+		endpoint: 'https://api.seneschal.space/v1/premium/opportunities',
+		mcp_tool: 'seneschal_premium_opportunities',
+		docs: 'https://docs.x402.org',
+		blurb: config.x402PaywallDescription
 	};
 }
 

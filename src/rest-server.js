@@ -31,6 +31,8 @@ import {
 	getStatsOverview
 } from './queries.js';
 import { filterProviders, FLASHLOAN_PROVIDERS } from './flashloan-providers.js';
+import { getPremiumOpportunities } from './queries-premium.js';
+import { buildX402Config, registerX402, describePaywall } from './x402.js';
 
 // `buildApp` is exported separately so tests can spin up a Fastify
 // instance against a fixture DB without touching the live one.
@@ -76,6 +78,9 @@ export async function buildApp(options = {}) {
 		});
 	});
 
+	const x402Cfg = options.x402Cfg ?? buildX402Config();
+	const paywallSummary = describePaywall(x402Cfg);
+
 	app.get('/', async () => ({
 		service: config.serviceName,
 		version: apiVersion,
@@ -90,8 +95,10 @@ export async function buildApp(options = {}) {
 			'GET /v1/borrowers/:address/history',
 			'GET /v1/builders/leaderboard',
 			'GET /v1/stats/overview',
-			'GET /v1/flashloan/providers'
-		]
+			'GET /v1/flashloan/providers',
+			'GET /v1/premium/opportunities (x402 paywall)'
+		],
+		paywall: paywallSummary
 	}));
 
 	app.get('/v1/health', async () => {
@@ -207,11 +214,51 @@ export async function buildApp(options = {}) {
 		};
 	});
 
+	// Premium endpoints sit behind the x402 paywall when configured,
+	// otherwise they surface 503 so the surface area remains
+	// discoverable even on a fresh install.
+	app.get('/v1/premium/opportunities', async (req, reply) => {
+		if (!x402Cfg.enabled) {
+			return reply.code(503).send({
+				error: {
+					code: 'paywall_not_configured',
+					message: 'Premium feed requires the operator to set X402_RECIPIENT_ADDRESS (see /paywall info).'
+				}
+			});
+		}
+		const q = req.query ?? {};
+		return getPremiumOpportunities(db, {
+			since_ms: q.since_ms,
+			min_debt_usd: q.min_debt_usd,
+			limit: q.limit,
+			liquidation_bonus: q.liquidation_bonus
+		});
+	});
+
+	// Always-on metadata endpoint describing the paywall — agents can
+	// introspect price + rails without making a paid call first.
+	app.get('/v1/paywall', async () => {
+		return paywallSummary ?? { enabled: false, reason: 'X402_RECIPIENT_ADDRESS not set' };
+	});
+
 	app.setNotFoundHandler((req, reply) => {
 		reply.code(404).send({
 			error: { code: 'not_found', message: `route ${req.method} ${req.url} not found` }
 		});
 	});
+
+	if (x402Cfg.enabled && options.installX402 !== false) {
+		// Side-effecty bit isolated at the end so the rest of the
+		// route registration is order-independent. If the @x402
+		// install fails (e.g. missing peer deps) we log loudly but
+		// keep the public service up.
+		try {
+			await registerX402(app, x402Cfg);
+		}
+		catch (err) {
+			app.log.error({ err: err?.stack ?? err?.message ?? String(err) }, 'x402 paywall registration failed; premium endpoints will answer 503');
+		}
+	}
 
 	return app;
 }

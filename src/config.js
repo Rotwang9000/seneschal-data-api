@@ -58,7 +58,30 @@ export const config = Object.freeze({
 	donateEth: asString('SENESCHAL_DONATE_ETH', ''),
 	donateBtc: asString('SENESCHAL_DONATE_BTC', ''),
 	donateGithub: asString('SENESCHAL_DONATE_GITHUB', ''),
-	donateMessage: asString('SENESCHAL_DONATE_MESSAGE', 'Seneschal runs on a single Helsinki box. Tips keep it online.')
+	donateMessage: asString('SENESCHAL_DONATE_MESSAGE', 'Seneschal runs on a single Helsinki box. Tips keep it online.'),
+
+	// ── x402 paywall ──────────────────────────────────────────────────
+	// Per-request micropayments via the x402 protocol (HTTP 402 + USDC
+	// transferWithAuthorization). The paywall is off unless
+	// X402_RECIPIENT_ADDRESS is set: in that case premium endpoints
+	// answer normally on free-tier resources but answer 402 + payment
+	// requirements on paid resources. Settlement is delegated to a
+	// facilitator service (`X402_FACILITATOR_URL`); the operator never
+	// holds the payer's private key or submits anything on-chain
+	// themselves.
+	x402Enabled: asString('X402_ENABLED', '') === '1',
+	x402Network: asString('X402_NETWORK', 'eip155:8453'),
+	x402RecipientAddress: asString('X402_RECIPIENT_ADDRESS', ''),
+	x402FacilitatorUrl: asString('X402_FACILITATOR_URL', 'https://x402.org/facilitator'),
+	// Price per call for each premium endpoint, expressed in the x402
+	// Money format ("$0.05" = 5 ¢). The facilitator quotes the USDC
+	// atomic amount on Base from this.
+	x402FeedPrice: asString('X402_FEED_PRICE', '$0.05'),
+	x402PaywallDescription: asString(
+		'X402_PAYWALL_DESCRIPTION',
+		'Premium Seneschal liquidation feed: full at-risk borrower set with profit estimates, market success rates, and recommended builder choice.'
+	),
+	x402MaxTimeoutSeconds: asInt('X402_MAX_TIMEOUT_SECONDS', 120)
 });
 
 export default config;

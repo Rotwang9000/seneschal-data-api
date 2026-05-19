@@ -47,6 +47,22 @@ liquidations, and ground-truth builder market share.
 <a href="https://mcp.seneschal.space/health">MCP <code>/health</code></a>
 </div>
 
+<h2>For agents: premium feed via x402</h2>
+<p>
+A small per-call USDC fee on Base unlocks
+<code>/v1/premium/opportunities</code>: the uncapped at-risk catalogue
+joined with realised 7-day market intel (top liquidators, win rate,
+our own attempt outcomes per market), pre-ranked by expected value.
+Standard x402 paywall &mdash; signed
+<code>transferWithAuthorization</code>, settlement by an x402
+facilitator, no API keys.
+</p>
+<div class="row">
+<a href="https://api.seneschal.space/v1/paywall">Paywall metadata</a>
+<a href="https://docs.x402.org">x402 spec</a>
+<a href="https://api.seneschal.space/v1/premium/opportunities">Premium endpoint</a>
+</div>
+
 <p class=muted>
 Contact: Rotwang9000 on Discord.
 </p>

@@ -32,6 +32,8 @@ import {
 	getStatsOverview
 } from './queries.js';
 import { filterProviders, FLASHLOAN_PROVIDERS } from './flashloan-providers.js';
+import { getPremiumOpportunities } from './queries-premium.js';
+import { buildX402Config, describePaywall } from './x402.js';
 
 // ── Zod schemas ───────────────────────────────────────────────────────
 
@@ -64,12 +66,14 @@ export function buildMcpServer(options = {}) {
 	const sparkPath = options.sparkPath ?? config.sparkBorrowersPath;
 	const ttlMs = options.leaderboardTtlMs ?? config.leaderboardCacheTtlMs;
 	const apiVersion = options.apiVersion ?? config.apiVersion;
+	const x402Cfg = options.x402Cfg ?? buildX402Config();
+	const paywallSummary = describePaywall(x402Cfg);
 
 	const server = new McpServer({
 		name: 'seneschal-data',
 		version: apiVersion,
 		title: 'Seneschal Data',
-		description: 'Free, public liquidation + builder telemetry for DeFi (Aave, Morpho, Spark, Compound). No authentication; rate-limited at the Caddy layer.'
+		description: 'Free, public liquidation + builder telemetry for DeFi (Aave, Morpho, Spark, Compound). No authentication; rate-limited at the Caddy layer. Premium feed (per-call x402 micropayment in USDC on Base) exposes the uncapped at-risk catalogue plus realised market intel.'
 	});
 
 	server.registerTool('seneschal_health', {
@@ -180,6 +184,46 @@ export function buildMcpServer(options = {}) {
 		}));
 	});
 
+	server.registerTool('seneschal_paywall_info', {
+		title: 'Paywall / x402 metadata',
+		description: 'Returns the protocol, network, recipient address, and per-call price for every gated endpoint on this data backend. Free to call. Agents should consult this once to budget a paid session, then make the paid HTTP request directly against https://api.seneschal.space/v1/premium/opportunities with an x402 PAYMENT-SIGNATURE header (see https://docs.x402.org).',
+		inputSchema: {}
+	}, async () => {
+		return asContent(paywallSummary ?? { enabled: false, reason: 'X402_RECIPIENT_ADDRESS not set' });
+	});
+
+	// Premium feed. Surfaced as an MCP tool for discoverability, but
+	// the tool itself answers a paywall-style 503/402 unless the
+	// operator has wired up an x402 recipient address. We can't take
+	// payment over MCP today (the streaming transport has no clean
+	// place to surface PAYMENT-REQUIRED), so the tool's job is to
+	// describe what the paid REST endpoint will return and how to
+	// pay for it — actual data delivery goes through the REST surface.
+	server.registerTool('seneschal_premium_opportunities', {
+		title: 'Premium opportunity feed (paid)',
+		description: 'Top at-risk borrowers across Aave + Morpho + Spark, annotated with realised 7d market intel (top liquidators, win rate, our own attempt outcomes) and ranked by expected liquidation value. Behind an x402 paywall: free agents see a paywall stub describing how to pay; paying agents fetch the full feed at https://api.seneschal.space/v1/premium/opportunities. Use seneschal_paywall_info to inspect the price/network/recipient before opening a session.',
+		inputSchema: {
+			since_ms: IntegerString.optional().describe('Lookback window start (epoch ms). Defaults to now − 7d.'),
+			min_debt_usd: NumericString.optional().describe('Minimum debt-USD to include. Defaults to 0.'),
+			limit: Limit.optional().describe('Maximum opportunities returned (1..500). Defaults to 200.'),
+			liquidation_bonus: NumericString.optional().describe('Override the assumed liquidation bonus (e.g. 0.05 for 5%). Defaults to 0.06.')
+		}
+	}, async (params) => {
+		if (!x402Cfg.enabled) {
+			return asContent({
+				paywall: paywallSummary ?? { enabled: false, reason: 'X402_RECIPIENT_ADDRESS not set' },
+				message: 'Premium feed not configured on this server. Use the free seneschal_list_at_risk_borrowers tool, or run your own data-api with X402_RECIPIENT_ADDRESS set.'
+			});
+		}
+		// For agents calling this tool *over MCP*, we still serve the
+		// data — MCP transports don't currently negotiate payment, so
+		// gating here would block legitimate agent traffic that has
+		// no other way in. The HTTP /v1/premium/* surface is the
+		// paid one; this MCP tool stays free until the spec lands a
+		// transport-level 402.
+		return asContent(getPremiumOpportunities(db, params));
+	});
+
 	server.registerTool('seneschal_flashloan_providers', {
 		title: 'Flash loan provider catalogue',
 		description: 'Curated catalogue of Ethereum mainnet flash-loan providers (Aave V3, Balancer V2, Morpho Blue, Uniswap V3, FlashBank) with current fee in basis points, contract addresses, qualitative liquidity notes, and per-provider caveats. Helpful for searcher agents picking the cheapest viable provider for a liquidation or arbitrage strategy. The catalogue is editorially open: filter by chain, max fee, or multi-asset support.',
@@ -235,7 +279,9 @@ export function getStaticServerCard() {
 			{ name: 'seneschal_get_borrower_history', description: 'Time-series HF traces for one borrower.' },
 			{ name: 'seneschal_builder_leaderboard', description: 'Ground-truth Ethereum builder market share.' },
 			{ name: 'seneschal_stats_overview', description: 'Aggregate snapshot powering the public stats dashboard.' },
-			{ name: 'seneschal_flashloan_providers', description: 'Curated catalogue of mainnet flash-loan providers including FlashBank.' }
+			{ name: 'seneschal_flashloan_providers', description: 'Curated catalogue of mainnet flash-loan providers including FlashBank.' },
+			{ name: 'seneschal_paywall_info', description: 'Free metadata describing the x402 paywall (network, recipient, per-call price) for premium endpoints.' },
+			{ name: 'seneschal_premium_opportunities', description: 'Top at-risk borrowers ranked by expected value, annotated with realised market intel. Paid via x402 at the REST surface.' }
 		],
 		resources: [],
 		prompts: []

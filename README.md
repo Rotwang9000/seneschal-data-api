@@ -150,6 +150,50 @@ Shared design rule: both REST and MCP layers are *thin* wrappers around
 `queries.js`. Any new endpoint goes in `queries.js` first (with tests),
 then both wrappers in the same commit.
 
+## Premium tier (x402 paywall)
+
+`src/queries-premium.js` plus `src/x402.js` add per-call payment to a
+small family of `/v1/premium/*` endpoints (and `seneschal_premium_*`
+MCP tools). The paywall is off unless the operator sets
+`X402_RECIPIENT_ADDRESS`. Once set, unsigned requests get HTTP 402 with
+machine-readable payment requirements, and an
+[x402 facilitator](https://docs.x402.org) settles a signed
+EIP-3009 `transferWithAuthorization` for USDC on Base mainnet.
+
+### Configure
+
+| Env var                    | Default                          | Notes                                                                  |
+| -------------------------- | -------------------------------- | ---------------------------------------------------------------------- |
+| `X402_RECIPIENT_ADDRESS`   | (empty — paywall off)            | Recipient wallet on the chosen network. 0x-prefixed 20-byte hex.       |
+| `X402_NETWORK`             | `eip155:8453` (Base mainnet)     | Any CAIP-2 EVM network the facilitator supports.                       |
+| `X402_FACILITATOR_URL`     | `https://x402.org/facilitator`   | Use a production facilitator for mainnet (see x402.org/ecosystem).     |
+| `X402_FEED_PRICE`          | `$0.05`                          | Money-formatted (`$0.05`) or atomic units (`50000`).                   |
+| `X402_PAYWALL_DESCRIPTION` | …                                | Shown on `/`, `/v1/paywall`, and the stats dashboard.                  |
+| `X402_MAX_TIMEOUT_SECONDS` | `120`                            | Maximum settlement window per call.                                    |
+
+Free metadata endpoint (zero cost, no signature required):
+
+```
+curl https://api.seneschal.space/v1/paywall
+```
+
+returns the live network/recipient/price/route table so agents can
+budget a session before opening a paid request.
+
+## Support
+
+- **Per-call payments** (preferred for agents): pay $0.05 USDC on Base
+  to call `GET /v1/premium/opportunities`. See `/v1/paywall` for the
+  live recipient + rails.
+- **GitHub Sponsors**: the Sponsor button at the top of the repo
+  (`.github/FUNDING.yml`).
+- **Direct tips**: ETH / BTC addresses are surfaced on
+  [stats.seneschal.space](https://stats.seneschal.space) once the
+  operator sets `SENESCHAL_DONATE_ETH` / `SENESCHAL_DONATE_BTC`.
+
+Seneschal runs on a single Helsinki box; every cent helps keep it
+online.
+
 ## License
 
 MIT &mdash; see [LICENSE](LICENSE).

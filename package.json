@@ -18,6 +18,10 @@
 		"@fastify/cors": "^11.2.0",
 		"@fastify/rate-limit": "^10.3.0",
 		"@modelcontextprotocol/sdk": "^1.29.0",
+		"@x402/core": "^2.12.0",
+		"@x402/evm": "^2.12.0",
+		"@x402/fastify": "^2.12.0",
+		"@x402/paywall": "^2.12.0",
 		"better-sqlite3": "^12.10.0",
 		"fastify": "^5.8.5",
 		"zod": "^4.4.3"

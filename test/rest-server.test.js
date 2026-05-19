@@ -212,6 +212,111 @@ describe('/v1/borrowers (generic)', () => {
 	});
 });
 
+describe('paywall surface (x402 disabled)', () => {
+	test('GET /v1/paywall returns disabled state', async () => {
+		const r = await call('GET', '/v1/paywall');
+		expect(r.statusCode).toBe(200);
+		const body = r.json();
+		expect(body.enabled).toBe(false);
+		expect(body.reason).toMatch(/RECIPIENT_ADDRESS/);
+	});
+
+	test('GET / advertises paywall slot but resolves to null on free server', async () => {
+		const r = await call('GET', '/');
+		const body = r.json();
+		expect(body).toHaveProperty('paywall');
+		expect(body.paywall).toBeNull();
+		expect(body.endpoints).toEqual(expect.arrayContaining([
+			expect.stringMatching(/premium\/opportunities/)
+		]));
+	});
+
+	test('GET /v1/premium/opportunities answers 503 with paywall_not_configured', async () => {
+		const r = await call('GET', '/v1/premium/opportunities');
+		expect(r.statusCode).toBe(503);
+		const body = r.json();
+		expect(body.error.code).toBe('paywall_not_configured');
+		expect(body.error.message).toMatch(/X402_RECIPIENT_ADDRESS/);
+	});
+});
+
+describe('paywall surface (x402 enabled, in-process)', () => {
+	let appPaid;
+	beforeAll(async () => {
+		// Build a second app with x402 enabled but pointed at a
+		// nonsense facilitator URL (we never call it — the unit
+		// test exercises the route-not-paid path: an unsigned GET
+		// triggers the middleware's 402 challenge entirely from
+		// the local route config). `installX402: false` keeps the
+		// dynamic @x402/fastify import out of the unit test for
+		// speed; the in-process surface still describes the
+		// configured paywall via /v1/paywall + /.
+		appPaid = await buildApp({
+			db,
+			sparkPath,
+			morphoPath,
+			shadowPath,
+			leaderboardTtlMs: 50,
+			rateLimit: false,
+			logger: false,
+			installX402: false,
+			x402Cfg: {
+				enabled: true,
+				recipient: '0x1234567890abcdef1234567890abcdef12345678',
+				network: 'eip155:8453',
+				facilitatorUrl: 'https://x402.org/facilitator',
+				routes: {
+					'GET /v1/premium/opportunities': {
+						accepts: {
+							scheme: 'exact',
+							payTo: '0x1234567890abcdef1234567890abcdef12345678',
+							price: '$0.05',
+							network: 'eip155:8453',
+							maxTimeoutSeconds: 120
+						},
+						description: 'premium opportunity feed',
+						mimeType: 'application/json'
+					}
+				}
+			}
+		});
+	});
+
+	afterAll(async () => {
+		await appPaid?.close?.();
+	});
+
+	test('GET / surfaces paywall metadata', async () => {
+		const r = await appPaid.inject({ method: 'GET', url: '/' });
+		const body = r.json();
+		expect(body.paywall).not.toBeNull();
+		expect(body.paywall.protocol).toBe('x402');
+		expect(body.paywall.payTo).toBe('0x1234567890abcdef1234567890abcdef12345678');
+		expect(body.paywall.routes[0].endpoint).toBe('GET /v1/premium/opportunities');
+		expect(body.paywall.routes[0].price).toBe('$0.05');
+	});
+
+	test('GET /v1/paywall mirrors the / paywall block', async () => {
+		const r = await appPaid.inject({ method: 'GET', url: '/v1/paywall' });
+		expect(r.statusCode).toBe(200);
+		const body = r.json();
+		expect(body.protocol).toBe('x402');
+		expect(body.routes.length).toBe(1);
+	});
+
+	test('GET /v1/premium/opportunities returns the feed when middleware not installed', async () => {
+		// With installX402:false, the route handler runs without the
+		// paywall enforcing 402 — but the feed itself still works,
+		// which protects against regressions where the premium SQL
+		// breaks regardless of the payment layer.
+		const r = await appPaid.inject({ method: 'GET', url: '/v1/premium/opportunities?limit=5' });
+		expect(r.statusCode).toBe(200);
+		const body = r.json();
+		expect(Array.isArray(body.opportunities)).toBe(true);
+		expect(body.assumptions.liquidation_bonus_default).toBeCloseTo(0.06);
+	});
+});
+
 describe('/v1/flashloan/providers', () => {
 	test('default returns ethereum catalogue', async () => {
 		const r = await call('GET', '/v1/flashloan/providers');

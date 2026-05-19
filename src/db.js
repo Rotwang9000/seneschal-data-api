@@ -46,6 +46,7 @@ export function openTestDb() {
 	db.exec(MORPHO_HISTORY_DDL);
 	db.exec(MISSED_LIQUIDATIONS_DDL);
 	db.exec(EXECUTIONS_DDL);
+	db.exec(MORPHO_ATTEMPTS_DDL);
 	return db;
 }
 
@@ -206,6 +207,31 @@ CREATE INDEX idx_success ON executions(success);
 CREATE INDEX idx_tx ON executions(tx_hash);
 `;
 
+// Mirror of mev-logs-1.db's morpho_attempts table. The premium feed
+// joins per-market outcomes from here so an agent can see "we've
+// already tried this market 14 times today and 0 landed".
+const MORPHO_ATTEMPTS_DDL = `
+CREATE TABLE morpho_attempts (
+	id INTEGER PRIMARY KEY AUTOINCREMENT,
+	timestamp INTEGER NOT NULL,
+	block_number INTEGER,
+	market_id TEXT,
+	borrower_address TEXT,
+	ltv REAL,
+	lltv REAL,
+	debt_usd REAL,
+	estimated_profit_usd REAL,
+	preflight INTEGER DEFAULT 0,
+	outcome TEXT NOT NULL,
+	stage TEXT,
+	reason TEXT,
+	tx_hash TEXT,
+	gas_used INTEGER
+);
+CREATE INDEX idx_morpho_attempt_ts ON morpho_attempts(timestamp DESC);
+CREATE INDEX idx_morpho_attempt_market ON morpho_attempts(market_id);
+`;
+
 // Exported for explicit test setup; useful when a test needs to verify
 // the DDL matches the live schema (we do this in queries.test.js).
 export const TEST_SCHEMA = {
@@ -214,5 +240,6 @@ export const TEST_SCHEMA = {
 	MORPHO_SNAPSHOTS_DDL,
 	MORPHO_HISTORY_DDL,
 	MISSED_LIQUIDATIONS_DDL,
-	EXECUTIONS_DDL
+	EXECUTIONS_DDL,
+	MORPHO_ATTEMPTS_DDL
 };
