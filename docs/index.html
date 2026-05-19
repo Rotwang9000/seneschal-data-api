@@ -238,7 +238,39 @@ same parameters and same response shape (just wrapped as MCP tool content).
 <tr><td><code>seneschal_builder_leaderboard</code></td><td>Ethereum builder market share.</td></tr>
 <tr><td><code>seneschal_stats_overview</code></td><td>One-call aggregate bundle powering the public dashboard.</td></tr>
 <tr><td><code>seneschal_flashloan_providers</code></td><td>Curated catalogue of mainnet flash-loan providers (Aave, Balancer, Morpho, Uniswap V3, FlashBank).</td></tr>
+<tr><td><code>seneschal_paywall_info</code></td><td><strong>Free.</strong> Describes the live x402 paywall (network, recipient, per-call price, MCP tool name) for the premium tier.</td></tr>
+<tr><td><code>seneschal_premium_opportunities</code></td><td><strong>Premium.</strong> Uncapped at-risk catalogue ranked by expected value, with realised 7d market intel. Paid via x402 at the REST surface.</td></tr>
 </table>
+
+<h2>Premium tier (x402)</h2>
+<p>
+A small per-call USDC fee on Base mainnet unlocks
+<code>GET /v1/premium/opportunities</code>: the uncapped at-risk borrower
+catalogue plus realised 7-day market intel (top liquidators, win rate
+per market, our own attempt outcomes), ranked by expected liquidation
+value. Honest value-add over the free 500-row, snapshot-only
+<code>/v1/liquidations/atrisk</code>.
+</p>
+<p>
+Payment uses the <a href="https://docs.x402.org">x402 protocol</a>
+(spec v2). Unsigned requests get HTTP 402 with machine-readable
+<code>PaymentRequirements</code>; the client signs an EIP-3009
+<code>transferWithAuthorization</code> and retries with a
+<code>PAYMENT-SIGNATURE</code> header. The <a href="https://x402.org/facilitator">facilitator</a>
+verifies + settles on Base. No API keys, no subscriptions, gasless
+for the payer.
+</p>
+<p>
+Free metadata endpoint for budgeting before any paid call:
+</p>
+<pre><code>curl https://api.seneschal.space/v1/paywall</code></pre>
+<p>
+Returns <code>enabled: false</code> when the operator hasn't
+configured a recipient yet (current state) or the full network /
+recipient / route / price table once configured. Agents using
+<code>@x402/express</code>, <code>@x402/fastify</code> or the
+official client libraries pay automatically on 402.
+</p>
 
 <h2>Data freshness &amp; coverage</h2>
 <ul>
