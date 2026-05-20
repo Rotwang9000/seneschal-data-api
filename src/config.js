@@ -88,6 +88,10 @@ export const config = Object.freeze({
 		'Premium Seneschal liquidation feed: full at-risk borrower set with profit estimates, market success rates, and recommended builder choice.'
 	),
 	x402MaxTimeoutSeconds: asInt('X402_MAX_TIMEOUT_SECONDS', 120),
+	// Default price for /v1/q/* atomic-fact endpoints. Override per-route
+	// is not currently supported — they share a single tier so agents can
+	// budget a flat per-call cost.
+	x402QPrice: asString('X402_Q_PRICE', '$0.001'),
 
 	// ── Income telemetry ──────────────────────────────────────────────
 	// Drives /v1/stats/income + the `income` block embedded in
@@ -102,11 +106,13 @@ export const config = Object.freeze({
 	paymasterAddress: asString('PAYMASTER_ADDRESS', '0xb6E8d189285003cF0000388b01BA0C3433ee9f14'),
 	entryPointAddress: asString('ENTRYPOINT_ADDRESS', '0x0000000071727De22E5E9d8BAf0edAc6f37da032'),
 	baseRpcUrl: asString('BASE_RPC_URL', 'https://base-rpc.publicnode.com'),
-	// Spot ETH/USD assumed when costing the paymaster ETH float. The
-	// snapshot exposes this as `eth_usd_assumed` so the dashboard can
-	// label numbers honestly. No need for live price feeds here — the
-	// only consumer is a "roughly how much capital is parked?" stat.
-	ethUsd: asInt('ETH_USD', 4200),
+	// Fallback ETH/USD price. The income snapshot now reads Chainlink
+	// (`0x71041dddad3595F9CEd3DcCFBe3D1F4b0a16Bb70` on Base) for the
+	// live price; this is only consulted when the oracle call fails.
+	// `eth_usd_source` in the response tells the dashboard whether it
+	// was `chainlink` (live) or `fallback`.
+	ethUsd: asInt('ETH_USD', 2500),
+	ethUsdFeed: asString('ETH_USD_FEED', '0x71041dddad3595F9CEd3DcCFBe3D1F4b0a16Bb70'),
 	// Income snapshot in-process cache TTL. The dashboard refreshes
 	// every 30 s; 60 s of staleness halves RPC pressure with no
 	// meaningful UX cost.

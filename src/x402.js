@@ -48,7 +48,28 @@ export const PREMIUM_ROUTES = Object.freeze([
 		description: 'Per-builder bid distribution (p25/median/p75/p90/p99/max) and hourly slot activity histogram from the Seneschal shadow recorder. Answers "what bid value do I need to land in builder X right now?" for searchers tuning bundle pricing.',
 		mimeType: 'application/json',
 		priceEnvKey: 'X402_BUILDER_STATS_PRICE'
-	})
+	}),
+	// Penny Oracle — atomic single-fact endpoints. Each priced at the
+	// same micro tier (`X402_Q_PRICE`, default $0.001) so agents can
+	// hammer them in tight loops without subscription friction. The
+	// path family is enumerated explicitly because @x402/fastify
+	// matches `"METHOD /path"` exactly, no wildcards.
+	...[
+		{ p: '/v1/q/liquidatable',         d: 'Single-fact: is borrower X currently liquidatable? Returns {found, liquidatable, hf, debt_usd, last_seen_ms} sourced from Aave + Morpho snapshots.' },
+		{ p: '/v1/q/at-risk-count',        d: 'Single-fact: how many borrowers have HF < max_hf and debt >= min_debt_usd right now? Returns {count, total_debt_usd}.' },
+		{ p: '/v1/q/recent-liquidations',  d: 'Single-fact: how many on-chain liquidations have we observed in the last `since_min` minutes, with what aggregate debt? Returns {count, total_debt_usd}.' },
+		{ p: '/v1/q/top-builder',          d: 'Single-fact: which builder has the largest slot share in the named window (24h|7d|30d)? Returns {builder, share_pct, slots_won}.' },
+		{ p: '/v1/q/builder-share',        d: 'Single-fact: what share of slots in the window did `builder` win? Substring match.' },
+		{ p: '/v1/q/builder-bid',          d: 'Single-fact: percentile bid value (in ETH) for `builder` over the window. Returns {value_eth, samples}.' },
+		{ p: '/v1/q/cheapest-flashloan',   d: 'Single-fact: cheapest flash-loan provider for `asset` on `chain` (default ethereum). Returns {provider, fee_bps, address}.' },
+		{ p: '/v1/q/data-freshness',       d: 'Single-fact: age in seconds of the freshest record in the named source (shadow_blocks|borrower_snapshot|morpho_borrower_snapshot|missed_liquidations|executions).' }
+	].map(r => Object.freeze({
+		method: 'GET',
+		path: r.p,
+		description: r.d,
+		mimeType: 'application/json',
+		priceEnvKey: 'X402_Q_PRICE'
+	}))
 ]);
 
 /**

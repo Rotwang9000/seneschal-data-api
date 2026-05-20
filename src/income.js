@@ -26,7 +26,14 @@ import { base } from 'viem/chains';
 export const DEFAULT_PAYMASTER = '0xb6E8d189285003cF0000388b01BA0C3433ee9f14';
 export const DEFAULT_ENTRY_POINT = '0x0000000071727De22E5E9d8BAf0edAc6f37da032';
 export const DEFAULT_DUST_USD = 5;
-export const DEFAULT_ETH_USD = 4200; // conservative — updated via env if needed.
+// Chainlink ETH/USD aggregator on Base mainnet. The earlier hardcoded
+// `DEFAULT_ETH_USD = 4200` was nonsense — replaced by an actual oracle
+// read each snapshot. We keep the fallback as a small constant so
+// snapshots still produce a number when the RPC call fails, but the
+// snapshot exposes `eth_usd_source` so the dashboard can label which.
+export const CHAINLINK_ETH_USD_BASE = '0x71041dddad3595F9CEd3DcCFBe3D1F4b0a16Bb70';
+export const CHAINLINK_DECIMALS = 8;
+export const FALLBACK_ETH_USD = 2500;
 
 export const DEFAULT_TOKENS = Object.freeze([
 	Object.freeze({ symbol: 'USDC', address: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913', decimals: 6, usd: 1.0 }),
@@ -44,6 +51,10 @@ const ERC20_ABI = parseAbi([
 
 const ENTRYPOINT_ABI = parseAbi([
 	'function balanceOf(address) view returns (uint256)'
+]);
+
+const CHAINLINK_FEED_ABI = parseAbi([
+	'function latestRoundData() view returns (uint80 roundId, int256 answer, uint256 startedAt, uint256 updatedAt, uint80 answeredInRound)'
 ]);
 
 /**
@@ -76,9 +87,13 @@ export function buildIncomeConfig({ cfg = {}, env = process.env } = {}) {
 	if (!/^https?:\/\//u.test(rpcUrl)) {
 		throw new TypeError(`income: BASE_RPC_URL=${rpcUrl} must be an http(s) URL`);
 	}
-	const ethUsd = Number(cfg.ethUsd ?? DEFAULT_ETH_USD);
-	if (!Number.isFinite(ethUsd) || ethUsd <= 0) {
+	const fallbackEthUsd = Number(cfg.ethUsd ?? FALLBACK_ETH_USD);
+	if (!Number.isFinite(fallbackEthUsd) || fallbackEthUsd <= 0) {
 		throw new TypeError(`income: ETH_USD=${cfg.ethUsd} must be a positive number`);
+	}
+	const ethUsdFeed = ((cfg.ethUsdFeed ?? CHAINLINK_ETH_USD_BASE) + '').trim();
+	if (ethUsdFeed && !ADDRESS_RE.test(ethUsdFeed)) {
+		throw new TypeError(`income: ETH_USD_FEED=${ethUsdFeed} is not a 0x-prefixed 20-byte hex string`);
 	}
 	return Object.freeze({
 		enabled: true,
@@ -87,7 +102,8 @@ export function buildIncomeConfig({ cfg = {}, env = process.env } = {}) {
 		recipient: recipient || null,
 		rpcUrl,
 		tokens: DEFAULT_TOKENS,
-		ethUsd,
+		ethUsdFeed: ethUsdFeed || null,
+		fallbackEthUsd,
 		dustUsd: DEFAULT_DUST_USD,
 		cacheTtlMs: Number(cfg.cacheTtlMs ?? 60_000)
 	});
@@ -114,15 +130,22 @@ export function classifyToken(token, raw, { dustUsd = DEFAULT_DUST_USD } = {}) {
 }
 
 /**
- * Pure: combine three primitive reads + a token table into the final
+ * Pure: combine the primitive reads + a token table into the final
  * snapshot object. Separated from the RPC layer so tests can inject
  * arbitrary balance shapes without faking a public client.
+ *
+ * `ethUsd` is the spot price used for ETH→USD conversion. `ethUsdSource`
+ * tags whether the number is `chainlink` (live), `fallback` (RPC failed),
+ * or `none` (caller chose to suppress conversion). Snapshots are stamped
+ * with the source so dashboards can label numbers honestly instead of
+ * pretending a hardcoded 4200 was real.
  */
 export function buildIncomeSnapshot({
 	paymaster,
 	entryPoint,
 	recipient,
 	ethUsd,
+	ethUsdSource = 'unknown',
 	dustUsd = DEFAULT_DUST_USD,
 	paymasterEthWei = 0n,
 	paymasterEntryPointWei = 0n,
@@ -153,6 +176,8 @@ export function buildIncomeSnapshot({
 	return {
 		enabled: true,
 		as_of_ms: asOfMs,
+		eth_usd: Number(ethUsd.toFixed(2)),
+		eth_usd_source: ethUsdSource,
 		paymaster: paymaster
 			? {
 				address: paymaster,
@@ -161,7 +186,6 @@ export function buildIncomeSnapshot({
 				entrypoint_deposit_eth: Number(epDeposit.toFixed(6)),
 				total_eth_float: Number(totalEthFloat.toFixed(6)),
 				total_eth_float_usd: Number(totalEthFloatUsd.toFixed(2)),
-				eth_usd_assumed: ethUsd,
 				tokens: tokensOut,
 				total_token_usd: Number(totalTokenUsd.toFixed(2)),
 				sweep_eligible_usd: Number(sweepEligibleUsd.toFixed(2))
@@ -176,6 +200,17 @@ export function buildIncomeSnapshot({
 			: null,
 		treasury_usd: treasuryUsd
 	};
+}
+
+/**
+ * Pure: convert a Chainlink `latestRoundData` answer (int256, scaled
+ * by `decimals`) into a USD-per-ETH Number. Returns null if the
+ * answer is non-positive (stale / error).
+ */
+export function chainlinkAnswerToUsd(answer, decimals = CHAINLINK_DECIMALS) {
+	const raw = typeof answer === 'bigint' ? answer : BigInt(answer ?? 0);
+	if (raw <= 0n) return null;
+	return Number(raw) / 10 ** decimals;
 }
 
 /**
@@ -220,7 +255,21 @@ export async function readIncomeSnapshot(incomeCfg, { client } = {}) {
 			args: [incomeCfg.recipient]
 		}));
 	}
-	const results = await Promise.all(reads);
+	// Bundle the ETH/USD oracle read alongside balance reads so we
+	// pay one round-trip cost. Promise.allSettled so a failing oracle
+	// doesn't kill the whole snapshot — we degrade to fallback.
+	let priceRead = Promise.resolve(null);
+	if (incomeCfg.ethUsdFeed) {
+		priceRead = pc.readContract({
+			address: incomeCfg.ethUsdFeed,
+			abi: CHAINLINK_FEED_ABI,
+			functionName: 'latestRoundData'
+		}).catch(() => null);
+	}
+	const [results, priceResult] = await Promise.all([
+		Promise.all(reads),
+		priceRead
+	]);
 	let i = 0;
 	let paymasterEthWei = 0n;
 	let paymasterEntryPointWei = 0n;
@@ -236,11 +285,21 @@ export async function readIncomeSnapshot(incomeCfg, { client } = {}) {
 	if (incomeCfg.recipient) {
 		recipientUsdcWei = results[i++];
 	}
+	let ethUsd = incomeCfg.fallbackEthUsd;
+	let ethUsdSource = incomeCfg.ethUsdFeed ? 'fallback' : 'configured';
+	if (priceResult && Array.isArray(priceResult)) {
+		const live = chainlinkAnswerToUsd(priceResult[1]);
+		if (live !== null && live > 0) {
+			ethUsd = live;
+			ethUsdSource = 'chainlink';
+		}
+	}
 	return buildIncomeSnapshot({
 		paymaster: incomeCfg.paymaster,
 		entryPoint: incomeCfg.entryPoint,
 		recipient: incomeCfg.recipient,
-		ethUsd: incomeCfg.ethUsd,
+		ethUsd,
+		ethUsdSource,
 		dustUsd: incomeCfg.dustUsd,
 		paymasterEthWei,
 		paymasterEntryPointWei,

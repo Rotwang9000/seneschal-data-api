@@ -35,6 +35,15 @@ import { getPremiumOpportunities, getPremiumBuilderStats } from './queries-premi
 import { buildX402Config, registerX402, describePaywall } from './x402.js';
 import { buildIncomeConfig, createIncomeCache } from './income.js';
 import { readIncomeHistory, bucketSeriesDaily } from './income-history.js';
+import {
+	qLiquidatable,
+	qAtRiskCount,
+	qRecentLiquidations,
+	qBuilderFacts,
+	qCheapestFlashloan,
+	qDataFreshness,
+	QUESTION_REGISTRY
+} from './queries-q.js';
 
 const ONE_HOUR_MS = 60 * 60 * 1000;
 const ONE_DAY_MS = 24 * ONE_HOUR_MS;
@@ -109,6 +118,7 @@ export async function buildApp(options = {}) {
 			entryPointAddress: config.entryPointAddress,
 			baseRpcUrl: config.baseRpcUrl,
 			ethUsd: config.ethUsd,
+			ethUsdFeed: config.ethUsdFeed,
 			cacheTtlMs: config.incomeCacheTtlMs,
 			x402RecipientAddress: config.x402RecipientAddress
 		},
@@ -134,7 +144,9 @@ export async function buildApp(options = {}) {
 			'GET /v1/stats/income/history',
 			'GET /v1/flashloan/providers',
 			'GET /v1/premium/opportunities (x402 paywall)',
-			'GET /v1/premium/builder-stats (x402 paywall)'
+			'GET /v1/premium/builder-stats (x402 paywall)',
+			'GET /v1/q (penny-oracle catalogue, free)',
+			'GET /v1/q/* (penny-oracle atomic-fact endpoints, x402 paywall)'
 		],
 		paywall: paywallSummary
 	}));
@@ -337,6 +349,75 @@ export async function buildApp(options = {}) {
 			limit: q.limit,
 			_shadowPath: shadowPath
 		});
+	});
+
+	// ── Penny Oracle: /v1/q/* atomic-fact endpoints ────────────
+	// Each is paywalled by @x402/fastify (priced via X402_Q_PRICE),
+	// then this handler runs a single SQL or static lookup. Designed
+	// to be safe to hit in a tight agent loop — every call is <50 ms
+	// and returns a flat object the agent can branch on.
+	const requirePaywall = (reply) => {
+		if (x402Cfg.enabled) return null;
+		reply.code(503).send({
+			error: {
+				code: 'paywall_not_configured',
+				message: 'The Penny Oracle requires the operator to set X402_RECIPIENT_ADDRESS (see /paywall info).'
+			}
+		});
+		return reply;
+	};
+
+	app.get('/v1/q/liquidatable', async (req, reply) => {
+		if (requirePaywall(reply)) return;
+		return qLiquidatable(db, req.query ?? {});
+	});
+	app.get('/v1/q/at-risk-count', async (req, reply) => {
+		if (requirePaywall(reply)) return;
+		return qAtRiskCount(db, req.query ?? {});
+	});
+	app.get('/v1/q/recent-liquidations', async (req, reply) => {
+		if (requirePaywall(reply)) return;
+		return qRecentLiquidations(db, req.query ?? {});
+	});
+	app.get('/v1/q/top-builder', async (req, reply) => {
+		if (requirePaywall(reply)) return;
+		return qBuilderFacts({ window: (req.query ?? {}).window, projection: 'top-builder' }, { shadowPath });
+	});
+	app.get('/v1/q/builder-share', async (req, reply) => {
+		if (requirePaywall(reply)) return;
+		const q = req.query ?? {};
+		return qBuilderFacts({ window: q.window, builder: q.builder, projection: 'share' }, { shadowPath });
+	});
+	app.get('/v1/q/builder-bid', async (req, reply) => {
+		if (requirePaywall(reply)) return;
+		const q = req.query ?? {};
+		return qBuilderFacts({ window: q.window, builder: q.builder, pct: q.pct, projection: 'bid' }, { shadowPath });
+	});
+	app.get('/v1/q/cheapest-flashloan', async (req, reply) => {
+		if (requirePaywall(reply)) return;
+		return qCheapestFlashloan(req.query ?? {});
+	});
+	app.get('/v1/q/data-freshness', async (req, reply) => {
+		if (requirePaywall(reply)) return;
+		return qDataFreshness(db, req.query ?? {}, { paths: { shadowPath } });
+	});
+
+	// Public catalogue: free GET that lists every Penny Oracle
+	// question and its declared input parameters. Lets agents
+	// discover the surface without making a paid call first.
+	app.get('/v1/q', async () => {
+		const price = x402Cfg.enabled
+			? (x402Cfg.routes['GET /v1/q/liquidatable']?.accepts?.price ?? config.x402QPrice)
+			: null;
+		return {
+			price_per_call: price,
+			network: x402Cfg.enabled ? x402Cfg.network : null,
+			questions: Object.entries(QUESTION_REGISTRY).map(([name, meta]) => ({
+				name,
+				path: `/v1/q/${name}`,
+				inputs: meta.inputs
+			}))
+		};
 	});
 
 	// Always-on metadata endpoint describing the paywall — agents can

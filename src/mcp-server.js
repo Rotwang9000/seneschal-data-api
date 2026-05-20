@@ -34,6 +34,7 @@ import {
 import { filterProviders, FLASHLOAN_PROVIDERS } from './flashloan-providers.js';
 import { getPremiumOpportunities, getPremiumBuilderStats } from './queries-premium.js';
 import { buildX402Config, describePaywall } from './x402.js';
+import { dispatchQuestion, QUESTION_REGISTRY } from './queries-q.js';
 
 // ── Zod schemas ───────────────────────────────────────────────────────
 
@@ -248,6 +249,39 @@ export function buildMcpServer(options = {}) {
 		}));
 	});
 
+	// Penny Oracle dispatcher — exposes the entire /v1/q/* family as
+	// a single MCP tool. The HTTP surface is paywalled per-call at
+	// $0.001 via x402; this MCP tool returns the data directly to
+	// authenticated agents (free transport, paid HTTP). The catalogue
+	// of supported `question` values is the QUESTION_REGISTRY keys.
+	server.registerTool('seneschal_q', {
+		title: 'Penny Oracle: atomic single-fact endpoints',
+		description: `Atomic single-fact endpoints designed for tight agent loops. Each answers ONE yes/no or one number from the same data that powers /v1/stats/overview and the premium routes, but with sub-50ms response time and a flat $0.001/call price at the REST surface. Supported question values: ${Object.keys(QUESTION_REGISTRY).join(', ')}. Each question takes its own params object; consult /v1/q for the per-question input list.`,
+		inputSchema: {
+			question: z.enum(Object.keys(QUESTION_REGISTRY)).describe('Which atomic fact to ask. See description for the list.'),
+			params: z.record(z.any()).optional().describe('Per-question parameter object. Pass addr/protocol for liquidatable, max_hf/min_debt_usd for at-risk-count, window/builder/pct for builder-* questions, source for data-freshness, etc.')
+		}
+	}, async ({ question, params }) => {
+		try {
+			const result = await dispatchQuestion({
+				name: question,
+				params: params ?? {},
+				db,
+				shadowPath
+			});
+			return asContent(result);
+		} catch (err) {
+			return asContent({
+				error: {
+					code: 'q_validation',
+					message: err?.message ?? String(err),
+					question,
+					available: Object.keys(QUESTION_REGISTRY)
+				}
+			});
+		}
+	});
+
 	server.registerTool('seneschal_flashloan_providers', {
 		title: 'Flash loan provider catalogue',
 		description: 'Curated catalogue of Ethereum mainnet flash-loan providers (Aave V3, Balancer V2, Morpho Blue, Uniswap V3, FlashBank) with current fee in basis points, contract addresses, qualitative liquidity notes, and per-provider caveats. Helpful for searcher agents picking the cheapest viable provider for a liquidation or arbitrage strategy. The catalogue is editorially open: filter by chain, max fee, or multi-asset support.',
@@ -306,7 +340,8 @@ export function getStaticServerCard() {
 			{ name: 'seneschal_flashloan_providers', description: 'Curated catalogue of mainnet flash-loan providers including FlashBank.' },
 			{ name: 'seneschal_paywall_info', description: 'Free metadata describing the x402 paywall (network, recipient, per-call price) for premium endpoints.' },
 			{ name: 'seneschal_premium_opportunities', description: 'Top at-risk borrowers ranked by expected value, annotated with realised market intel. Paid via x402 at the REST surface.' },
-			{ name: 'seneschal_premium_builder_stats', description: 'Per-builder bid distribution and hourly slot histogram for searcher bundle pricing. Paid via x402 at the REST surface.' }
+			{ name: 'seneschal_premium_builder_stats', description: 'Per-builder bid distribution and hourly slot histogram for searcher bundle pricing. Paid via x402 at the REST surface.' },
+			{ name: 'seneschal_q', description: 'Penny Oracle dispatcher — atomic single-fact endpoints (liquidatable, at-risk-count, top-builder, builder-share, builder-bid, recent-liquidations, cheapest-flashloan, data-freshness) priced at $0.001/call at the REST surface.' }
 		],
 		resources: [],
 		prompts: []
