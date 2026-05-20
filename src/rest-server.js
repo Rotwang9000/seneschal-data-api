@@ -44,6 +44,11 @@ import {
 	qDataFreshness,
 	QUESTION_REGISTRY
 } from './queries-q.js';
+import {
+	dispatchChainQuestion,
+	createChainCache,
+	CHAIN_QUESTION_REGISTRY
+} from './queries-q-chain.js';
 
 const ONE_HOUR_MS = 60 * 60 * 1000;
 const ONE_DAY_MS = 24 * ONE_HOUR_MS;
@@ -146,7 +151,9 @@ export async function buildApp(options = {}) {
 			'GET /v1/premium/opportunities (x402 paywall)',
 			'GET /v1/premium/builder-stats (x402 paywall)',
 			'GET /v1/q (penny-oracle catalogue, free)',
-			'GET /v1/q/* (penny-oracle atomic-fact endpoints, x402 paywall)'
+			'GET /v1/q/* (penny-oracle atomic-fact endpoints, x402 paywall)',
+			'GET /v1/q/xmr/* (Monero atomic-fact endpoints, x402 paywall)',
+			'GET /v1/q/zec/* (Zcash atomic-fact endpoints, x402 paywall)'
 		],
 		paywall: paywallSummary
 	}));
@@ -402,6 +409,63 @@ export async function buildApp(options = {}) {
 		return qDataFreshness(db, req.query ?? {}, { paths: { shadowPath } });
 	});
 
+	// ── Privacy-chain atomic facts: /v1/q/xmr/* and /v1/q/zec/* ──
+	// These reach out to an upstream monerod / zebra JSON-RPC. The
+	// RPC URLs live in env (MONERO_RPC_URL, ZCASH_RPC_URL); when a
+	// chain is unconfigured we 503 with `chain_not_configured` so
+	// agent SDKs surface a clean signal instead of a generic 502.
+	// Responses are cached in-process for `CHAIN_CACHE_TTL_MS` so a
+	// hot loop hammering /v1/q/xmr/height costs the daemon nothing.
+	const chainRpcUrls = options.chainRpcUrls ?? {
+		monero: config.moneroRpcUrl,
+		zcash: config.zcashRpcUrl
+	};
+	const chainRpcConfigured = options.chainRpcConfigured ?? {
+		monero: Boolean(chainRpcUrls.monero),
+		zcash: Boolean(chainRpcUrls.zcash)
+	};
+	const chainCache = options.chainCache ?? createChainCache({
+		ttlMs: options.chainCacheTtlMs ?? config.chainCacheTtlMs
+	});
+	const chainDeps = {
+		fetchImpl: options.fetchImpl ?? globalThis.fetch,
+		timeoutMs: options.chainRpcTimeoutMs ?? config.chainRpcTimeoutMs
+	};
+
+	function chainNotConfigured(reply, chain) {
+		reply.code(503).send({
+			error: {
+				code: 'chain_not_configured',
+				message: `${chain.toUpperCase()} RPC is not configured on this server. Set ${chain === 'monero' ? 'MONERO_RPC_URL' : 'ZCASH_RPC_URL'} to enable.`
+			}
+		});
+	}
+
+	for (const [name, meta] of Object.entries(CHAIN_QUESTION_REGISTRY)) {
+		app.get(`/v1/q/${name}`, async (req, reply) => {
+			if (requirePaywall(reply)) return;
+			if (!chainRpcConfigured[meta.chain]) {
+				chainNotConfigured(reply, meta.chain);
+				return;
+			}
+			try {
+				return await chainCache.get(`q:${name}`, () =>
+					dispatchChainQuestion({ name, deps: chainDeps, rpcUrls: chainRpcUrls })
+				);
+			} catch (err) {
+				req.log.error({ err: err?.message ?? String(err), name }, 'chain question failed');
+				reply.code(502);
+				return {
+					error: {
+						code: 'chain_rpc_failed',
+						message: err?.message ?? 'upstream RPC error',
+						chain: meta.chain
+					}
+				};
+			}
+		});
+	}
+
 	// Public catalogue: free GET that lists every Penny Oracle
 	// question and its declared input parameters. Lets agents
 	// discover the surface without making a paid call first.
@@ -409,14 +473,24 @@ export async function buildApp(options = {}) {
 		const price = x402Cfg.enabled
 			? (x402Cfg.routes['GET /v1/q/liquidatable']?.accepts?.price ?? config.x402QPrice)
 			: null;
+		const defi = Object.entries(QUESTION_REGISTRY).map(([name, meta]) => ({
+			name,
+			path: `/v1/q/${name}`,
+			inputs: meta.inputs,
+			category: 'defi'
+		}));
+		const chain = Object.entries(CHAIN_QUESTION_REGISTRY).map(([name, meta]) => ({
+			name,
+			path: `/v1/q/${name}`,
+			inputs: meta.inputs,
+			category: meta.chain,
+			available: chainRpcConfigured[meta.chain] === true
+		}));
 		return {
 			price_per_call: price,
 			network: x402Cfg.enabled ? x402Cfg.network : null,
-			questions: Object.entries(QUESTION_REGISTRY).map(([name, meta]) => ({
-				name,
-				path: `/v1/q/${name}`,
-				inputs: meta.inputs
-			}))
+			questions: [...defi, ...chain],
+			chain_status: chainRpcConfigured
 		};
 	});
 

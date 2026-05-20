@@ -35,6 +35,11 @@ import { filterProviders, FLASHLOAN_PROVIDERS } from './flashloan-providers.js';
 import { getPremiumOpportunities, getPremiumBuilderStats } from './queries-premium.js';
 import { buildX402Config, describePaywall } from './x402.js';
 import { dispatchQuestion, QUESTION_REGISTRY } from './queries-q.js';
+import {
+	dispatchChainQuestion,
+	createChainCache,
+	CHAIN_QUESTION_REGISTRY
+} from './queries-q-chain.js';
 
 // ── Zod schemas ───────────────────────────────────────────────────────
 
@@ -69,6 +74,24 @@ export function buildMcpServer(options = {}) {
 	const apiVersion = options.apiVersion ?? config.apiVersion;
 	const x402Cfg = options.x402Cfg ?? buildX402Config();
 	const paywallSummary = describePaywall(x402Cfg);
+
+	// Privacy-chain RPC plumbing — mirrors rest-server.js. Tests
+	// can override via options.chainRpcUrls / options.chainCache.
+	const chainRpcUrls = options.chainRpcUrls ?? {
+		monero: config.moneroRpcUrl,
+		zcash: config.zcashRpcUrl
+	};
+	const chainRpcConfigured = options.chainRpcConfigured ?? {
+		monero: Boolean(chainRpcUrls.monero),
+		zcash: Boolean(chainRpcUrls.zcash)
+	};
+	const chainCache = options.chainCache ?? createChainCache({
+		ttlMs: options.chainCacheTtlMs ?? config.chainCacheTtlMs
+	});
+	const chainDeps = {
+		fetchImpl: options.fetchImpl ?? globalThis.fetch,
+		timeoutMs: options.chainRpcTimeoutMs ?? config.chainRpcTimeoutMs
+	};
 
 	const server = new McpServer({
 		name: 'seneschal-data',
@@ -254,15 +277,35 @@ export function buildMcpServer(options = {}) {
 	// $0.001 via x402; this MCP tool returns the data directly to
 	// authenticated agents (free transport, paid HTTP). The catalogue
 	// of supported `question` values is the QUESTION_REGISTRY keys.
+	const allQuestions = [
+		...Object.keys(QUESTION_REGISTRY),
+		...Object.keys(CHAIN_QUESTION_REGISTRY)
+	];
 	server.registerTool('seneschal_q', {
-		title: 'Penny Oracle: atomic single-fact endpoints',
-		description: `Atomic single-fact endpoints designed for tight agent loops. Each answers ONE yes/no or one number from the same data that powers /v1/stats/overview and the premium routes, but with sub-50ms response time and a flat $0.001/call price at the REST surface. Supported question values: ${Object.keys(QUESTION_REGISTRY).join(', ')}. Each question takes its own params object; consult /v1/q for the per-question input list.`,
+		title: 'Penny Oracle: atomic single-fact endpoints (DeFi + privacy chains)',
+		description: `Atomic single-fact endpoints designed for tight agent loops. Each answers ONE yes/no or one number — sub-50ms, flat $0.001/call at the REST surface. Two families: (1) DeFi facts sourced from our SQLite + shadow-blocks recorder (${Object.keys(QUESTION_REGISTRY).join(', ')}); (2) privacy-chain facts sourced from Seneschal-operated full nodes — Monero (${Object.keys(CHAIN_QUESTION_REGISTRY).filter(k => k.startsWith('xmr/')).join(', ')}) and Zcash (${Object.keys(CHAIN_QUESTION_REGISTRY).filter(k => k.startsWith('zec/')).join(', ')}). Consult /v1/q for per-question input lists and live chain availability.`,
 		inputSchema: {
-			question: z.enum(Object.keys(QUESTION_REGISTRY)).describe('Which atomic fact to ask. See description for the list.'),
-			params: z.record(z.any()).optional().describe('Per-question parameter object. Pass addr/protocol for liquidatable, max_hf/min_debt_usd for at-risk-count, window/builder/pct for builder-* questions, source for data-freshness, etc.')
+			question: z.enum(allQuestions).describe('Which atomic fact to ask. See description for the list. Privacy-chain questions use `xmr/<name>` or `zec/<name>`.'),
+			params: z.record(z.any()).optional().describe('Per-question parameter object. DeFi questions take addr/protocol/window/builder/pct/etc. Privacy-chain questions currently take no params.')
 		}
 	}, async ({ question, params }) => {
 		try {
+			if (Object.prototype.hasOwnProperty.call(CHAIN_QUESTION_REGISTRY, question)) {
+				const meta = CHAIN_QUESTION_REGISTRY[question];
+				if (!chainRpcConfigured[meta.chain]) {
+					return asContent({
+						error: {
+							code: 'chain_not_configured',
+							message: `${meta.chain.toUpperCase()} RPC is not configured on this server.`,
+							chain: meta.chain
+						}
+					});
+				}
+				const result = await chainCache.get(`q:${question}`, () =>
+					dispatchChainQuestion({ name: question, deps: chainDeps, rpcUrls: chainRpcUrls })
+				);
+				return asContent(result);
+			}
 			const result = await dispatchQuestion({
 				name: question,
 				params: params ?? {},
@@ -276,7 +319,7 @@ export function buildMcpServer(options = {}) {
 					code: 'q_validation',
 					message: err?.message ?? String(err),
 					question,
-					available: Object.keys(QUESTION_REGISTRY)
+					available: allQuestions
 				}
 			});
 		}
@@ -341,7 +384,7 @@ export function getStaticServerCard() {
 			{ name: 'seneschal_paywall_info', description: 'Free metadata describing the x402 paywall (network, recipient, per-call price) for premium endpoints.' },
 			{ name: 'seneschal_premium_opportunities', description: 'Top at-risk borrowers ranked by expected value, annotated with realised market intel. Paid via x402 at the REST surface.' },
 			{ name: 'seneschal_premium_builder_stats', description: 'Per-builder bid distribution and hourly slot histogram for searcher bundle pricing. Paid via x402 at the REST surface.' },
-			{ name: 'seneschal_q', description: 'Penny Oracle dispatcher — atomic single-fact endpoints (liquidatable, at-risk-count, top-builder, builder-share, builder-bid, recent-liquidations, cheapest-flashloan, data-freshness) priced at $0.001/call at the REST surface.' }
+			{ name: 'seneschal_q', description: 'Penny Oracle dispatcher — atomic single-fact endpoints across DeFi (liquidatable, at-risk-count, top-builder, builder-share, builder-bid, recent-liquidations, cheapest-flashloan, data-freshness) and privacy chains (xmr/height, xmr/mempool, xmr/fee, xmr/last-block, zec/height, zec/mempool, zec/last-block). All priced at $0.001/call at the REST surface.' }
 		],
 		resources: [],
 		prompts: []

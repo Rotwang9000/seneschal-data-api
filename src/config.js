@@ -92,6 +92,16 @@ export const config = Object.freeze({
 	// is not currently supported — they share a single tier so agents can
 	// budget a flat per-call cost.
 	x402QPrice: asString('X402_Q_PRICE', '$0.001'),
+	// Privacy-chain JSON-RPC endpoints. When unset the matching
+	// /v1/q/xmr/* and /v1/q/zec/* routes answer HTTP 503 with
+	// `chain_not_configured` rather than silently 502-ing. Defaults
+	// to localhost since that's what a co-located node looks like;
+	// production wiring uses the reverse-SSH tunnel established in
+	// ops/systemd/seneschal-chain-tunnel.service.
+	moneroRpcUrl: asString('MONERO_RPC_URL', 'http://127.0.0.1:18081'),
+	zcashRpcUrl: asString('ZCASH_RPC_URL', 'http://127.0.0.1:8232'),
+	chainCacheTtlMs: asInt('CHAIN_CACHE_TTL_MS', 10_000),
+	chainRpcTimeoutMs: asInt('CHAIN_RPC_TIMEOUT_MS', 4_000),
 
 	// ── Income telemetry ──────────────────────────────────────────────
 	// Drives /v1/stats/income + the `income` block embedded in

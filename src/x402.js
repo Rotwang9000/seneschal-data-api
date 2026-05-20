@@ -62,7 +62,19 @@ export const PREMIUM_ROUTES = Object.freeze([
 		{ p: '/v1/q/builder-share',        d: 'Single-fact: what share of slots in the window did `builder` win? Substring match.' },
 		{ p: '/v1/q/builder-bid',          d: 'Single-fact: percentile bid value (in ETH) for `builder` over the window. Returns {value_eth, samples}.' },
 		{ p: '/v1/q/cheapest-flashloan',   d: 'Single-fact: cheapest flash-loan provider for `asset` on `chain` (default ethereum). Returns {provider, fee_bps, address}.' },
-		{ p: '/v1/q/data-freshness',       d: 'Single-fact: age in seconds of the freshest record in the named source (shadow_blocks|borrower_snapshot|morpho_borrower_snapshot|missed_liquidations|executions).' }
+		{ p: '/v1/q/data-freshness',       d: 'Single-fact: age in seconds of the freshest record in the named source (shadow_blocks|borrower_snapshot|morpho_borrower_snapshot|missed_liquidations|executions).' },
+		// Privacy-chain atomic facts. Sourced from our co-located
+		// monerod + zebra full nodes; the equivalent thing you'd
+		// otherwise need to run yourself (~108 GB Monero, ~270 GB
+		// Zcash). Cached 10 s server-side so a hot agent loop
+		// costs the daemon zero extra work.
+		{ p: '/v1/q/xmr/height',           d: 'Single-fact: current Monero chain height + sync status. Sourced from a live Seneschal-operated monerod node.' },
+		{ p: '/v1/q/xmr/mempool',          d: 'Single-fact: number of pending transactions in the Monero mempool right now.' },
+		{ p: '/v1/q/xmr/fee',              d: 'Single-fact: recommended Monero per-byte fee in piconero (also exposed per-kB for convenience).' },
+		{ p: '/v1/q/xmr/last-block',       d: 'Single-fact: timestamp + age of the most recent Monero block, plus hash, difficulty, and size.' },
+		{ p: '/v1/q/zec/height',           d: 'Single-fact: current Zcash chain height + verification progress + best block hash. Sourced from a live Seneschal-operated zebra node.' },
+		{ p: '/v1/q/zec/mempool',          d: 'Single-fact: Zcash mempool count + bytes.' },
+		{ p: '/v1/q/zec/last-block',       d: 'Single-fact: timestamp + age of the most recent Zcash block, plus hash, difficulty, and size.' }
 	].map(r => Object.freeze({
 		method: 'GET',
 		path: r.p,
