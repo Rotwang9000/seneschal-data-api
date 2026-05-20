@@ -241,6 +241,29 @@ export async function buildApp(options = {}) {
 		return paywallSummary ?? { enabled: false, reason: 'X402_RECIPIENT_ADDRESS not set' };
 	});
 
+	// `/.well-known/x402` — opt-in discovery manifest matching the
+	// emerging convention that x402 service-discovery agents (e.g.
+	// Agorion, coinbase/x402 #1379) scrape from a provider's apex
+	// domain. Same content as /v1/paywall but at the path discovery
+	// crawlers actually look at. Empty when the paywall is off so
+	// crawlers don't index a no-op endpoint.
+	app.get('/.well-known/x402', async (req, reply) => {
+		if (!paywallSummary) {
+			reply.code(404);
+			return { error: { code: 'paywall_not_configured', message: 'No x402 paywall configured on this host.' } };
+		}
+		return {
+			...paywallSummary,
+			service: {
+				name: 'Seneschal Data API',
+				homepage: 'https://seneschal.space',
+				docs: 'https://docs.seneschal.space/#premium-tier-x402',
+				api_root: 'https://api.seneschal.space',
+				mcp: 'https://mcp.seneschal.space'
+			}
+		};
+	});
+
 	app.setNotFoundHandler((req, reply) => {
 		reply.code(404).send({
 			error: { code: 'not_found', message: `route ${req.method} ${req.url} not found` }
