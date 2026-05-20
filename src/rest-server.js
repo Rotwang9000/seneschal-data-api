@@ -31,8 +31,27 @@ import {
 	getStatsOverview
 } from './queries.js';
 import { filterProviders, FLASHLOAN_PROVIDERS } from './flashloan-providers.js';
-import { getPremiumOpportunities } from './queries-premium.js';
+import { getPremiumOpportunities, getPremiumBuilderStats } from './queries-premium.js';
 import { buildX402Config, registerX402, describePaywall } from './x402.js';
+import { buildIncomeConfig, createIncomeCache } from './income.js';
+import { readIncomeHistory, bucketSeriesDaily } from './income-history.js';
+
+const ONE_HOUR_MS = 60 * 60 * 1000;
+const ONE_DAY_MS = 24 * ONE_HOUR_MS;
+const MAX_HISTORY_WINDOW_MS = 90 * ONE_DAY_MS;
+const DEFAULT_HISTORY_WINDOW_MS = 30 * ONE_DAY_MS;
+
+// Bound the time window the history endpoint will consider. Caps at
+// 90 days because beyond that the daily-bucket payload starts to
+// dominate the response and the chart becomes unreadable anyway.
+function clampWindow(raw) {
+	if (raw === undefined || raw === null) return DEFAULT_HISTORY_WINDOW_MS;
+	const n = Number(raw);
+	if (!Number.isFinite(n) || n <= 0) {
+		throw new TypeError(`window_ms: ${raw} must be a positive number`);
+	}
+	return Math.min(Math.max(n, ONE_HOUR_MS), MAX_HISTORY_WINDOW_MS);
+}
 
 // `buildApp` is exported separately so tests can spin up a Fastify
 // instance against a fixture DB without touching the live one.
@@ -81,6 +100,22 @@ export async function buildApp(options = {}) {
 	const x402Cfg = options.x402Cfg ?? buildX402Config();
 	const paywallSummary = describePaywall(x402Cfg);
 
+	// Income-telemetry config is derived from `config.js` defaults
+	// (paymaster + entry-point + rpc) merged with the live x402
+	// recipient. Tests inject their own via `options.incomeCfg`.
+	const incomeCfg = options.incomeCfg ?? buildIncomeConfig({
+		cfg: {
+			paymasterAddress: config.paymasterAddress,
+			entryPointAddress: config.entryPointAddress,
+			baseRpcUrl: config.baseRpcUrl,
+			ethUsd: config.ethUsd,
+			cacheTtlMs: config.incomeCacheTtlMs,
+			x402RecipientAddress: config.x402RecipientAddress
+		},
+		env: process.env
+	});
+	const incomeCache = createIncomeCache({ ttlMs: config.incomeCacheTtlMs });
+
 	app.get('/', async () => ({
 		service: config.serviceName,
 		version: apiVersion,
@@ -95,8 +130,11 @@ export async function buildApp(options = {}) {
 			'GET /v1/borrowers/:address/history',
 			'GET /v1/builders/leaderboard',
 			'GET /v1/stats/overview',
+			'GET /v1/stats/income',
+			'GET /v1/stats/income/history',
 			'GET /v1/flashloan/providers',
-			'GET /v1/premium/opportunities (x402 paywall)'
+			'GET /v1/premium/opportunities (x402 paywall)',
+			'GET /v1/premium/builder-stats (x402 paywall)'
 		],
 		paywall: paywallSummary
 	}));
@@ -181,13 +219,58 @@ export async function buildApp(options = {}) {
 	// all the aggregates the dashboard needs in one round trip so the
 	// page renders fast even on slow connections. Cached implicitly
 	// via the leaderboard sub-call (60s TTL); the other aggregates
-	// take ~50ms.
-	app.get('/v1/stats/overview', async () => {
-		return await getStatsOverview(db, {
+	// take ~50ms. The income snapshot has its own cache so the RPC
+	// reads don't gate the page render.
+	app.get('/v1/stats/overview', async (req) => {
+		const overview = await getStatsOverview(db, {
 			_shadowPath: shadowPath,
 			_sparkPath: sparkPath,
 			_ttlMs: ttlMs
 		});
+		try {
+			overview.income = await incomeCache.get(incomeCfg);
+		} catch (err) {
+			overview.income = { enabled: false, reason: `income read failed: ${err?.message ?? String(err)}` };
+			req.log.warn({ err: err?.message ?? String(err) }, 'income snapshot read failed');
+		}
+		return overview;
+	});
+
+	// Standalone income endpoint — same data as overview.income but
+	// available without the rest of the overview payload (~30 KB). Cheap
+	// to poll separately (cached upstream by `incomeCache`).
+	app.get('/v1/stats/income', async (req, reply) => {
+		if (!incomeCfg.enabled) {
+			reply.code(503);
+			return { enabled: false, reason: incomeCfg.reason ?? 'income disabled' };
+		}
+		try {
+			return await incomeCache.get(incomeCfg);
+		} catch (err) {
+			reply.code(502);
+			req.log.warn({ err: err?.message ?? String(err) }, 'income snapshot read failed');
+			return {
+				enabled: false,
+				reason: `income read failed: ${err?.message ?? String(err)}`
+			};
+		}
+	});
+
+	// Historical income time series for the treasury chart on
+	// stats.seneschal.space. Reads the JSONL file written by
+	// scripts/income-poller.mjs. Two views: `series` (raw hourly rows)
+	// and `daily` (one row per UTC day, latest-in-day reading).
+	const snapshotsPath = options.incomeSnapshotsPath ?? config.incomeSnapshotsPath;
+	app.get('/v1/stats/income/history', async (req) => {
+		const q = req.query ?? {};
+		const windowMs = clampWindow(q.window_ms);
+		const sinceMs = Date.now() - windowMs;
+		const hist = await readIncomeHistory(snapshotsPath, { sinceMs });
+		return {
+			...hist,
+			window_ms: windowMs,
+			daily: bucketSeriesDaily(hist.series ?? [])
+		};
 	});
 
 	// Curated mainnet flash-loan provider catalogue. Pure static data,
@@ -232,6 +315,27 @@ export async function buildApp(options = {}) {
 			min_debt_usd: q.min_debt_usd,
 			limit: q.limit,
 			liquidation_bonus: q.liquidation_bonus
+		});
+	});
+
+	// Per-builder bid distribution + hourly histogram. The free
+	// /v1/builders/leaderboard answers "who's winning?"; this one
+	// answers "what value do I need to land in their bundle?", which
+	// is the question searchers actually pay for.
+	app.get('/v1/premium/builder-stats', async (req, reply) => {
+		if (!x402Cfg.enabled) {
+			return reply.code(503).send({
+				error: {
+					code: 'paywall_not_configured',
+					message: 'Premium feed requires the operator to set X402_RECIPIENT_ADDRESS (see /paywall info).'
+				}
+			});
+		}
+		const q = req.query ?? {};
+		return getPremiumBuilderStats({
+			window_ms: q.window_ms,
+			limit: q.limit,
+			_shadowPath: shadowPath
 		});
 	});
 

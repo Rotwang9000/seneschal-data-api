@@ -139,6 +139,181 @@ function paramBonus(params) {
 	return n;
 }
 
+// ── Premium builder-stats (per-slot bid distribution intel) ──────────
+//
+// Augments the free /v1/builders/leaderboard with the percentile
+// breakdown of each builder's winning bids and a per-hour activity
+// histogram. The free endpoint answers "who's winning?"; this one
+// answers "what value do I need to land in their bundle?" which is
+// the question searchers actually pay for.
+//
+// All data is streamed from the same shadow-blocks.jsonl the free
+// endpoint reads, so adding this surface costs zero extra collection
+// — every row is already on disk.
+
+import { createReadStream, existsSync, statSync } from 'node:fs';
+import { createInterface } from 'node:readline';
+
+const SHADOW_DEFAULT = '/opt/mevbot/data/shadow-blocks.jsonl';
+const ONE_HOUR_MS = 60 * 60 * 1000;
+const ONE_DAY_MS = 24 * ONE_HOUR_MS;
+const DEFAULT_BUILDER_STATS_WINDOW_MS = 7 * ONE_DAY_MS;
+const MAX_BUILDER_STATS_WINDOW_MS = 30 * ONE_DAY_MS;
+const PERCENTILES = Object.freeze([0.25, 0.5, 0.75, 0.9, 0.99]);
+const DEFAULT_BUILDER_LIMIT = 25;
+const HARD_BUILDER_LIMIT = 100;
+
+/**
+ * Pure: take a sorted array of bid values and return percentile
+ * extractions. Sorted input is required so caller can reuse the sort.
+ * Returns `null` for empty arrays so callers can suppress per-builder
+ * sections that have no observations.
+ */
+export function summariseBidDistribution(sortedBids) {
+	if (!Array.isArray(sortedBids) || sortedBids.length === 0) return null;
+	const out = { count: sortedBids.length };
+	for (const p of PERCENTILES) {
+		// Nearest-rank percentile — robust for small samples and
+		// doesn't require interpolation that confuses downstream
+		// consumers.
+		const idx = Math.min(sortedBids.length - 1, Math.floor(p * sortedBids.length));
+		const label = p === 0.5 ? 'median_eth' : `p${Math.round(p * 100)}_eth`;
+		out[label] = sortedBids[idx];
+	}
+	out.max_eth = sortedBids[sortedBids.length - 1];
+	// Honest mean — useful for back-of-envelope ROI math.
+	let sum = 0;
+	for (const v of sortedBids) sum += v;
+	out.mean_eth = Number((sum / sortedBids.length).toFixed(9));
+	return out;
+}
+
+/**
+ * Pure: given a list of shadow rows, return the structured premium
+ * summary. Caller is responsible for the file I/O; this keeps the
+ * function trivially testable.
+ */
+export function buildBuilderStatsSummary({ rows, windowMs, asOfMs = Date.now(), limit = DEFAULT_BUILDER_LIMIT }) {
+	if (!Array.isArray(rows)) throw new TypeError('rows: must be an array of shadow snapshots');
+	const cutoff = asOfMs - windowMs;
+	const perBuilder = new Map();
+	const hourly = Array.from({ length: 24 }, () => ({ slots: 0, value_eth_sum: 0 }));
+	const globalBids = [];
+	let total = 0;
+
+	for (const row of rows) {
+		if (!row || typeof row.ts_ms !== 'number' || row.ts_ms < cutoff) continue;
+		total++;
+		const key = row.extra_data ?? row.miner ?? 'unknown';
+		const bidEth = weiStringToEth(row.actual_total_wei);
+		globalBids.push(bidEth);
+		const hour = new Date(row.ts_ms).getUTCHours();
+		hourly[hour].slots++;
+		hourly[hour].value_eth_sum += bidEth;
+		const agg = perBuilder.get(key) ?? { slots_won: 0, bids: [] };
+		agg.slots_won++;
+		agg.bids.push(bidEth);
+		perBuilder.set(key, agg);
+	}
+
+	const builders = [...perBuilder.entries()]
+		.map(([builder, agg]) => {
+			agg.bids.sort((a, b) => a - b);
+			return {
+				builder,
+				slots_won: agg.slots_won,
+				share_pct: total > 0 ? +(100 * agg.slots_won / total).toFixed(2) : 0,
+				bid_distribution: summariseBidDistribution(agg.bids)
+			};
+		})
+		.sort((a, b) => b.slots_won - a.slots_won)
+		.slice(0, limit);
+
+	globalBids.sort((a, b) => a - b);
+
+	return {
+		as_of_ms: asOfMs,
+		window_ms: windowMs,
+		total_slots: total,
+		global_bid_distribution: summariseBidDistribution(globalBids),
+		hourly_distribution: hourly.map((h, hour_utc) => ({
+			hour_utc,
+			slot_count: h.slots,
+			mean_value_eth: h.slots > 0 ? Number((h.value_eth_sum / h.slots).toFixed(9)) : 0
+		})),
+		builders,
+		note: 'Bids are the block-value (proposer payment) recorded by the Seneschal shadow recorder. Higher = harder to outbid.'
+	};
+}
+
+function weiStringToEth(raw) {
+	if (raw === undefined || raw === null) return 0;
+	try {
+		const wei = typeof raw === 'bigint' ? raw : BigInt(raw);
+		// Convert via string to avoid double-precision artefacts on
+		// large values. 1e18 wei = 1 ETH so a 18-decimal divide is
+		// honest within JS Number range for any realistic slot bid.
+		return Number(wei) / 1e18;
+	} catch {
+		return 0;
+	}
+}
+
+export function paramBuilderWindow(params) {
+	if (params.window_ms === undefined || params.window_ms === null) {
+		return DEFAULT_BUILDER_STATS_WINDOW_MS;
+	}
+	const n = Number(params.window_ms);
+	if (!Number.isFinite(n) || n <= 0) {
+		throw new TypeError(`window_ms: ${params.window_ms} must be a positive number`);
+	}
+	return Math.min(Math.max(n, ONE_HOUR_MS), MAX_BUILDER_STATS_WINDOW_MS);
+}
+
+/**
+ * Streaming wrapper around buildBuilderStatsSummary. Caller passes
+ * the shadow-blocks path (defaults to the live one). We collect
+ * matching rows into memory — at 30 days of 12s slots the upper
+ * bound is ~216k entries × ~120 bytes parsed ≈ 26 MB resident
+ * during the request which is acceptable for an authenticated
+ * paid endpoint that fires at most a few times/hour.
+ */
+export async function getPremiumBuilderStats(params = {}) {
+	const windowMs = paramBuilderWindow(params);
+	const limit = paramLimit(params, DEFAULT_BUILDER_LIMIT, HARD_BUILDER_LIMIT);
+	const shadowPath = params._shadowPath ?? SHADOW_DEFAULT;
+	const asOfMs = Date.now();
+	const cutoff = asOfMs - windowMs;
+
+	if (!existsSync(shadowPath)) {
+		return {
+			as_of_ms: asOfMs,
+			window_ms: windowMs,
+			total_slots: 0,
+			builders: [],
+			note: 'shadow-blocks.jsonl not present',
+			source_freshness_s: null
+		};
+	}
+
+	const rows = [];
+	const stream = createReadStream(shadowPath, { encoding: 'utf8' });
+	const rl = createInterface({ input: stream, crlfDelay: Infinity });
+	for await (const line of rl) {
+		if (!line) continue;
+		let d;
+		try { d = JSON.parse(line); } catch { continue; }
+		if (typeof d.ts_ms !== 'number' || d.ts_ms < cutoff) continue;
+		rows.push(d);
+	}
+	const summary = buildBuilderStatsSummary({ rows, windowMs, asOfMs, limit });
+	const mtime = statSync(shadowPath).mtimeMs;
+	return {
+		...summary,
+		source_freshness_s: Math.round((asOfMs - mtime) / 1000)
+	};
+}
+
 // 7d aggregates over `missed_liquidations`. Returns both the summary
 // rollup and per-(collateral_asset, debt_asset) lookups for the row
 // annotator.

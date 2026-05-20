@@ -87,7 +87,35 @@ export const config = Object.freeze({
 		'X402_PAYWALL_DESCRIPTION',
 		'Premium Seneschal liquidation feed: full at-risk borrower set with profit estimates, market success rates, and recommended builder choice.'
 	),
-	x402MaxTimeoutSeconds: asInt('X402_MAX_TIMEOUT_SECONDS', 120)
+	x402MaxTimeoutSeconds: asInt('X402_MAX_TIMEOUT_SECONDS', 120),
+
+	// ── Income telemetry ──────────────────────────────────────────────
+	// Drives /v1/stats/income + the `income` block embedded in
+	// /v1/stats/overview. All values are optional — when both
+	// PAYMASTER_ADDRESS and X402_RECIPIENT_ADDRESS are empty the
+	// feature is off and the panel hides itself.
+	//
+	// PAYMASTER_ADDRESS / ENTRYPOINT_ADDRESS / BASE_RPC_URL default to
+	// the contracts we actually run (Seneschal paymaster v2 on Base
+	// mainnet + canonical EntryPoint v0.7 + the PublicNode RPC). Override
+	// when running a different deployment for testing.
+	paymasterAddress: asString('PAYMASTER_ADDRESS', '0xb6E8d189285003cF0000388b01BA0C3433ee9f14'),
+	entryPointAddress: asString('ENTRYPOINT_ADDRESS', '0x0000000071727De22E5E9d8BAf0edAc6f37da032'),
+	baseRpcUrl: asString('BASE_RPC_URL', 'https://base-rpc.publicnode.com'),
+	// Spot ETH/USD assumed when costing the paymaster ETH float. The
+	// snapshot exposes this as `eth_usd_assumed` so the dashboard can
+	// label numbers honestly. No need for live price feeds here — the
+	// only consumer is a "roughly how much capital is parked?" stat.
+	ethUsd: asInt('ETH_USD', 4200),
+	// Income snapshot in-process cache TTL. The dashboard refreshes
+	// every 30 s; 60 s of staleness halves RPC pressure with no
+	// meaningful UX cost.
+	incomeCacheTtlMs: asInt('INCOME_CACHE_TTL_MS', 60_000),
+	// Path to the JSONL file that scripts/income-poller.mjs appends
+	// daily snapshots to. The REST server reads this read-only to
+	// power historical charts. Empty path = "no history yet, frontend
+	// hides the chart".
+	incomeSnapshotsPath: asString('SENESCHAL_INCOME_SNAPSHOTS', '/var/lib/seneschal-income/snapshots.jsonl')
 });
 
 export default config;

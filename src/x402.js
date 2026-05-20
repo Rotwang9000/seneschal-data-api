@@ -35,6 +35,19 @@ export const PREMIUM_ROUTES = Object.freeze([
 		description: 'Top at-risk borrowers across Aave + Morpho + Spark with realised market success-rate, average actual profit-USD, and the builder most likely to land each market. Sorted by expected EV. Pure SQL, no live RPC.',
 		mimeType: 'application/json',
 		priceEnvKey: 'X402_FEED_PRICE'
+	}),
+	Object.freeze({
+		method: 'GET',
+		path: '/v1/premium/builder-stats',
+		// Per-builder bid distribution (median/p90/p99/max) + hourly
+		// slot activity histogram. Sourced from the Seneschal shadow
+		// recorder so it covers every observed slot, not just landed
+		// blocks. Tells searchers what value they need to outbid each
+		// builder, segmented by hour of day. Useful for tuning bundle
+		// bid pricing.
+		description: 'Per-builder bid distribution (p25/median/p75/p90/p99/max) and hourly slot activity histogram from the Seneschal shadow recorder. Answers "what bid value do I need to land in builder X right now?" for searchers tuning bundle pricing.',
+		mimeType: 'application/json',
+		priceEnvKey: 'X402_BUILDER_STATS_PRICE'
 	})
 ]);
 

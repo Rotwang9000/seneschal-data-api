@@ -32,7 +32,7 @@ import {
 	getStatsOverview
 } from './queries.js';
 import { filterProviders, FLASHLOAN_PROVIDERS } from './flashloan-providers.js';
-import { getPremiumOpportunities } from './queries-premium.js';
+import { getPremiumOpportunities, getPremiumBuilderStats } from './queries-premium.js';
 import { buildX402Config, describePaywall } from './x402.js';
 
 // ── Zod schemas ───────────────────────────────────────────────────────
@@ -224,6 +224,30 @@ export function buildMcpServer(options = {}) {
 		return asContent(getPremiumOpportunities(db, params));
 	});
 
+	// Premium builder-stats tool — same data as
+	// /v1/premium/builder-stats. Useful for agents tuning bundle
+	// pricing: "what value do I need to outbid builder X right now?".
+	server.registerTool('seneschal_premium_builder_stats', {
+		title: 'Premium per-builder bid distribution (paid)',
+		description: 'Per-builder bid distribution (p25/median/p75/p90/p99/max ETH) and a 24-element hourly slot histogram over a configurable window. Sourced from the Seneschal shadow recorder so it covers every observed slot, not just landed blocks. Behind an x402 paywall at the REST surface; this MCP tool serves the data directly to authenticated agents.',
+		inputSchema: {
+			window_ms: IntegerString.optional().describe('Lookback window in milliseconds. Defaults to 7 days. Clamped to [1h, 30d].'),
+			limit: Limit.optional().describe('Max builders returned (1..100). Defaults to 25.')
+		}
+	}, async (params) => {
+		if (!x402Cfg.enabled) {
+			return asContent({
+				paywall: paywallSummary ?? { enabled: false, reason: 'X402_RECIPIENT_ADDRESS not set' },
+				message: 'Premium builder-stats not configured on this server. Use the free seneschal_builder_leaderboard tool for slot counts and share, or run your own data-api with X402_RECIPIENT_ADDRESS set.'
+			});
+		}
+		return asContent(await getPremiumBuilderStats({
+			window_ms: params.window_ms,
+			limit: params.limit,
+			_shadowPath: shadowPath
+		}));
+	});
+
 	server.registerTool('seneschal_flashloan_providers', {
 		title: 'Flash loan provider catalogue',
 		description: 'Curated catalogue of Ethereum mainnet flash-loan providers (Aave V3, Balancer V2, Morpho Blue, Uniswap V3, FlashBank) with current fee in basis points, contract addresses, qualitative liquidity notes, and per-provider caveats. Helpful for searcher agents picking the cheapest viable provider for a liquidation or arbitrage strategy. The catalogue is editorially open: filter by chain, max fee, or multi-asset support.',
@@ -281,7 +305,8 @@ export function getStaticServerCard() {
 			{ name: 'seneschal_stats_overview', description: 'Aggregate snapshot powering the public stats dashboard.' },
 			{ name: 'seneschal_flashloan_providers', description: 'Curated catalogue of mainnet flash-loan providers including FlashBank.' },
 			{ name: 'seneschal_paywall_info', description: 'Free metadata describing the x402 paywall (network, recipient, per-call price) for premium endpoints.' },
-			{ name: 'seneschal_premium_opportunities', description: 'Top at-risk borrowers ranked by expected value, annotated with realised market intel. Paid via x402 at the REST surface.' }
+			{ name: 'seneschal_premium_opportunities', description: 'Top at-risk borrowers ranked by expected value, annotated with realised market intel. Paid via x402 at the REST surface.' },
+			{ name: 'seneschal_premium_builder_stats', description: 'Per-builder bid distribution and hourly slot histogram for searcher bundle pricing. Paid via x402 at the REST surface.' }
 		],
 		resources: [],
 		prompts: []
