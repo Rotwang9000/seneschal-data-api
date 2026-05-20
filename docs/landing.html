@@ -47,6 +47,20 @@ liquidations, and ground-truth builder market share.
 <a href="https://mcp.seneschal.space/health">MCP <code>/health</code></a>
 </div>
 
+<h2>For smart accounts: pay gas in stablecoins on Base</h2>
+<p>
+ERC-4337 v0.7 paymaster on Base mainnet. Stop holding ETH in every
+smart account &mdash; pay gas in <code>USDC</code>, <code>EURC</code>,
+<code>USDT</code>, <code>DAI</code> or <code>cbBTC</code> at Chainlink-quoted
+rates plus a small markup. Verified on BaseScan + Sourcify,
+smoke-tested via Pimlico, MIT-licensed.
+</p>
+<div class="row">
+<a href="https://docs.seneschal.space/paymaster.html" style="background:#e7f1ff;border-color:#1462b3;color:#1462b3"><strong>Paymaster integration docs &raquo;</strong></a>
+<a href="https://basescan.org/address/0xb6E8d189285003cF0000388b01BA0C3433ee9f14#code">BaseScan source</a>
+<a href="https://github.com/Rotwang9000/seneschal-paymaster">GitHub</a>
+</div>
+
 <h2>For agents: premium feed via x402</h2>
 <p>
 A small per-call USDC fee on Base unlocks

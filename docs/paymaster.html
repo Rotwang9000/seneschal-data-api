@@ -1,0 +1,345 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Seneschal Paymaster — pay gas in stablecoins on Base</title>
+<meta name="description" content="ERC-4337 v0.7 paymaster on Base mainnet. Pay transaction gas in USDC, EURC, USDT, DAI or cbBTC instead of ETH. Chainlink-priced, verified on BaseScan + Sourcify, smoke-tested via Pimlico.">
+<style>
+:root {
+	--fg: #1a1a1a;
+	--muted: #6b6b6b;
+	--accent: #1462b3;
+	--bg: #fdfdfc;
+	--code-bg: #f4f4f4;
+	--border: #e4e4e2;
+	--good: #1f7a3a;
+	--warn: #b06900;
+}
+* { box-sizing: border-box }
+html, body { background: var(--bg); color: var(--fg); margin: 0 }
+body { font: 16px/1.6 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; padding: 1em }
+main { max-width: 52em; margin: 0 auto; padding: 2em 1em 4em }
+h1 { font-weight: 600; font-size: 2em; margin: 0 0 .1em }
+h2 { font-weight: 600; font-size: 1.3em; margin-top: 2em; padding-bottom: .15em; border-bottom: 1px solid var(--border) }
+h3 { font-weight: 600; font-size: 1.05em; margin-top: 1.5em }
+p { margin: .6em 0 }
+a { color: var(--accent) }
+.muted { color: var(--muted); font-size: 0.92em }
+code, pre { font-family: ui-monospace, "JetBrains Mono", Consolas, "Liberation Mono", monospace; font-size: 0.92em }
+code { background: var(--code-bg); padding: 1px 5px; border-radius: 3px; word-break: break-word }
+pre { background: var(--code-bg); padding: 0.8em 1em; border-radius: 4px; overflow-x: auto; line-height: 1.45 }
+pre code { background: transparent; padding: 0 }
+.kv { background: #fff; border: 1px solid var(--border); border-radius: 5px; padding: 0.6em 1em; margin: 0.6em 0 }
+.kv table { margin: 0 }
+table { border-collapse: collapse; width: 100%; margin: 0.8em 0; font-size: 0.92em }
+th, td { padding: 0.5em 0.7em; border: 1px solid var(--border); text-align: left; vertical-align: top }
+th { background: #f7f7f5 }
+.callout { background: #fff8e7; border-left: 3px solid #e0b400; padding: 0.6em 1em; margin: 1em 0; border-radius: 0 4px 4px 0 }
+.callout-info { background: #eaf3fc; border-left-color: #1462b3 }
+.callout-good { background: #ecf6ef; border-left-color: #1f7a3a }
+.pill { display: inline-block; font-size: 0.78em; font-weight: 600; padding: 1px 7px; border-radius: 3px; vertical-align: 2px }
+.pill.live { background: #ecf6ef; color: var(--good); border: 1px solid #c2e2ce }
+.pill.deprecated { background: #fdecec; color: #a23131; border: 1px solid #f0c1c1 }
+nav.crumbs { font-size: 0.9em; color: var(--muted); margin-bottom: 0.5em }
+nav.crumbs a { color: var(--muted) }
+footer { text-align: center; margin-top: 4em; padding-top: 2em; border-top: 1px solid var(--border); color: var(--muted); font-size: 0.9em }
+</style>
+</head>
+<body>
+<main>
+
+<nav class="crumbs">
+<a href="https://seneschal.space/">Seneschal</a>
+&nbsp;·&nbsp; <a href="https://docs.seneschal.space/">Docs</a>
+&nbsp;·&nbsp; Paymaster
+</nav>
+
+<h1>Seneschal Paymaster <span class="pill live">LIVE</span></h1>
+<p class="muted">
+Pay ERC-4337 transaction gas in stablecoins on Base mainnet. No ETH
+required in your smart account; the paymaster fronts the gas and pulls
+USDC/EURC/USDT/DAI/cbBTC from you at Chainlink-quoted rates.
+</p>
+
+<div class="callout callout-info">
+<strong>Status:</strong> v2 deployed, verified, profitable.
+Smoke-tested end-to-end via Pimlico.
+Source verified on <a href="https://basescan.org/address/0xb6E8d189285003cF0000388b01BA0C3433ee9f14#code">BaseScan</a>
+and <a href="https://sourcify.dev/#/lookup/0xb6E8d189285003cF0000388b01BA0C3433ee9f14">Sourcify</a>
+(<code>exact_match</code>). Integration questions:
+<a href="https://github.com/Rotwang9000/seneschal-paymaster/issues">GitHub issues</a>
+or <code>@Rotwang9000</code> on Discord.
+</div>
+
+<h2>Live address</h2>
+<div class="kv">
+<table>
+<tr><th>Paymaster</th><td><code>0xb6E8d189285003cF0000388b01BA0C3433ee9f14</code></td></tr>
+<tr><th>Chain</th><td>Base mainnet (chainId 8453)</td></tr>
+<tr><th>EntryPoint</th><td><code>0x0000000071727De22E5E9d8BAf0edAc6f37da032</code> (ERC-4337 v0.7)</td></tr>
+<tr><th>Source</th><td><a href="https://github.com/Rotwang9000/seneschal-paymaster">Rotwang9000/seneschal-paymaster</a></td></tr>
+<tr><th>Verification</th><td><a href="https://basescan.org/address/0xb6E8d189285003cF0000388b01BA0C3433ee9f14#code">BaseScan</a> · <a href="https://sourcify.dev/#/lookup/0xb6E8d189285003cF0000388b01BA0C3433ee9f14">Sourcify</a></td></tr>
+<tr><th>Smoke-tested via</th><td>Pimlico (<code>api.pimlico.io/v2/base/rpc</code>)</td></tr>
+</table>
+</div>
+
+<p class="muted">
+The earlier v1 paymaster at
+<code>0xC5642B37000F9559b4628D7BA228051010150017</code>
+<span class="pill deprecated">deprecated</span> is undeployed (deposit
+withdrawn). v1 under-charged for its own postOp gas; v2 fixes that with
+an explicit overhead inside <code>_postOp</code> and a <code>validUntil</code>
+window inside <code>_validatePaymasterUserOp</code>.
+</p>
+
+<h2>Supported tokens</h2>
+<table>
+<tr><th>Symbol</th><th>Address</th><th>Decimals</th><th>Markup over Chainlink spot</th></tr>
+<tr><td><code>USDC</code></td><td><code>0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913</code></td><td>6</td><td>7%</td></tr>
+<tr><td><code>EURC</code></td><td><code>0x60a3E35Cc302bFA44Cb288Bc5a4F316Fdb1adb42</code></td><td>6</td><td>7%</td></tr>
+<tr><td><code>USDT</code></td><td><code>0xfde4C96c8593536E31F229EA8f37b2ADa2699bb2</code></td><td>6</td><td>8%</td></tr>
+<tr><td><code>DAI</code></td><td><code>0x50c5725949A6F0c72E6C4a641F24049A917DB0Cb</code></td><td>18</td><td>8%</td></tr>
+<tr><td><code>cbBTC</code></td><td><code>0xcbB7C0000aB88B473b1f5aFd9ef808440eed33Bf</code></td><td>8</td><td>10%</td></tr>
+</table>
+<p>
+Prices feed from Chainlink. Stablecoins use the canonical token/USD
+feeds with a 25h heartbeat tolerance; cbBTC uses a 2h tolerance.
+</p>
+
+<h2>paymasterAndData layout</h2>
+<pre><code>[ 0..20)   paymaster address               (set by EntryPoint)
+[20..36)   paymasterVerificationGasLimit   (recommended &ge; 200 000)
+[36..52)   paymasterPostOpGasLimit         (recommended &ge; 120 000)
+[52..72)   token address                   (one of the supported tokens)
+[72..104)  maxTokenCost (uint256)          (max token-native units you'll spend)</code></pre>
+
+<p>
+<code>maxTokenCost</code> is a slippage guard. Quote off-chain with
+<code>paymaster.quote(token, expectedGasWei)</code> and supply 110-120% of
+that to absorb a baseFee uptick between simulation and inclusion.
+</p>
+
+<h3>Gas budget rationale</h3>
+<p>
+Validation reads <strong>two</strong> Chainlink feeds (ETH/USD + token/USD),
+executes a <code>transferFrom</code> from the sender, and emits the prefund
+context. Empirical gas: ~140–160k. PostOp reads the token feed again,
+executes a <code>transfer</code> of the refund, and emits an event.
+Empirical gas: ~55–75k.
+</p>
+<p>
+Setting <code>paymasterVerificationGasLimit</code> below 150 000 or
+<code>paymasterPostOpGasLimit</code> below 90 000 will cause
+Pimlico/Alchemy/Stackup to drop the userOp with <code>AA33 reverted 0x</code>
+(out-of-gas inside the paymaster). The contract refunds unused gas via
+the postOp refund mechanism, so generous budgets are essentially free.
+</p>
+
+<h3>validationData</h3>
+<p>
+<code>_validatePaymasterUserOp</code> returns a <code>validUntil</code> of
+<code>block.timestamp + 5 minutes</code>. Bundlers will therefore drop any
+userOp that doesn't get included within that window — important because
+the Chainlink-read prices in validation could otherwise drift. If you
+simulate a userOp and then sit on it for &gt;5 minutes before submitting,
+re-simulate.
+</p>
+
+<h2>What the smart account must have</h2>
+<p>Before sending the userOp:</p>
+<ol>
+<li><strong>Token balance</strong>: at least <code>maxTokenCost</code> of the
+chosen token in the smart account.</li>
+<li><strong>Token allowance</strong>: the paymaster needs
+<code>approve(paymaster, maxTokenCost)</code> (or more —
+<code>MaxUint256</code> once is fine). The allowance can be granted either:
+<ul>
+<li>in a <strong>prior userOp</strong> the user signs (one-off "approve
+paymaster for unlimited USDC"), or</li>
+<li>in a <strong>batched call</strong> within the same userOp (if your
+account supports batched calls and your bundler allows
+<code>transferFrom</code>-from-sender during validation, which Pimlico
+does).</li>
+</ul>
+</li>
+</ol>
+<p>
+If the allowance or balance is insufficient, the bundler will drop the
+userOp during simulation. There's no on-chain failure path.
+</p>
+
+<h2>Live example — viem + permissionless</h2>
+<pre><code>import { createPublicClient, http, encodePacked, parseAbi } from 'viem';
+import { base } from 'viem/chains';
+import { createBundlerClient, entryPoint07Address } from 'viem/account-abstraction';
+
+const PAYMASTER = '0xb6E8d189285003cF0000388b01BA0C3433ee9f14';
+const USDC      = '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913';
+
+const pub = createPublicClient({
+	chain: base,
+	transport: http('https://base-rpc.publicnode.com')
+});
+
+const quote = await pub.readContract({
+	address: PAYMASTER,
+	abi: parseAbi(['function quote(address,uint256) view returns (uint256)']),
+	functionName: 'quote',
+	args: [USDC, 900_000_000_000_000n]  // 0.0009 ETH ≈ 300k gas @ 3 gwei
+});
+const maxTokenCost = (quote * 12n) / 10n;  // +20% slippage buffer
+const paymasterData = encodePacked(['address','uint256'], [USDC, maxTokenCost]);
+
+const bundler = createBundlerClient({
+	chain: base,
+	transport: http('https://api.pimlico.io/v2/base/rpc?apikey=' + process.env.PIMLICO_KEY),
+	paymaster: {
+		async getPaymasterData() {
+			return {
+				paymaster: PAYMASTER,
+				paymasterData,
+				paymasterVerificationGasLimit: 200_000n,
+				paymasterPostOpGasLimit: 120_000n
+			};
+		}
+	}
+});
+// then bundler.sendUserOperation({ account, calls, … }) as usual.</code></pre>
+
+<h2>Live example — ethers.js v6</h2>
+<pre><code>import { ethers } from 'ethers';
+
+const PAYMASTER = '0xb6E8d189285003cF0000388b01BA0C3433ee9f14';
+const USDC      = '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913';
+const provider  = new ethers.JsonRpcProvider('https://base-rpc.publicnode.com');
+
+const paymaster = new ethers.Contract(
+	PAYMASTER,
+	[ 'function quote(address token, uint256 ethWei) view returns (uint256)' ],
+	provider
+);
+
+// 1. Estimate the userOp's total gas (callGasLimit + verificationGasLimit
+//    + preVerificationGas + paymasterVerificationGasLimit + paymasterPostOpGasLimit)
+//    multiplied by maxFeePerGas. Most ERC-4337 SDKs expose this directly.
+const expectedGasWei = 300_000n * 3_000_000_000n;   // 300k gas × 3 gwei
+
+// 2. Quote the USDC cost.
+const quote = await paymaster.quote(USDC, expectedGasWei);
+const maxTokenCost = (quote * 12n) / 10n;            // 20% slippage buffer
+
+// 3. Build the paymasterAndData suffix (SDK / bundler prepends the
+//    address + gas limits; you only contribute the trailing 52 bytes).
+const paymasterData = ethers.solidityPacked(
+	[ 'address', 'uint256' ],
+	[ USDC, maxTokenCost ]
+);
+
+// 4. In your bundler client (Pimlico, Stackup, Alchemy AA, biconomy SDK):
+//      paymaster:                       PAYMASTER,
+//      paymasterData:                   paymasterData,
+//      paymasterVerificationGasLimit:   200_000,
+//      paymasterPostOpGasLimit:         120_000,</code></pre>
+
+<h2>Validation rules (bundler will check)</h2>
+<p>
+The paymaster passes
+<a href="https://eips.ethereum.org/EIPS/eip-7562">ERC-7562</a>
+storage-access rules:
+</p>
+<ul>
+<li>Reads/writes only its own storage (<code>tokenConfigs</code>,
+<code>paused</code>, <code>supportedTokens</code>).</li>
+<li>Calls <code>transferFrom</code> on the user's chosen ERC-20, which is
+sender-associated storage
+(<code>balances[sender]</code>,
+<code>allowances[sender][paymaster]</code>) — explicitly whitelisted by
+4337.</li>
+<li>Calls Chainlink price feeds via <code>staticcall</code> only — read-only.</li>
+</ul>
+<p>
+If a bundler reports a simulation failure not listed below, open a
+<a href="https://github.com/Rotwang9000/seneschal-paymaster/issues">GitHub
+issue</a> with the bundler trace.
+</p>
+
+<h2>Common errors</h2>
+<table>
+<tr><th>Error</th><th>Cause</th><th>Fix</th></tr>
+<tr><td><code>AA33 reverted: TokenNotSupported</code></td><td>Token addr not configured</td><td>Use one from the table above</td></tr>
+<tr><td><code>AA33 reverted: MaxTokenCostExceeded</code></td><td>Your <code>maxTokenCost</code> was below the live quote</td><td>Re-quote and bump by &ge;20%</td></tr>
+<tr><td><code>AA33 reverted: BadPaymasterDataLength</code></td><td><code>paymasterAndData</code> suffix isn't exactly 52 bytes</td><td>Re-pack with <code>encodePacked(['address','uint256'], …)</code></td></tr>
+<tr><td><code>AA33 reverted: StalePrice</code></td><td>Chainlink feed hasn't updated within the staleness window</td><td>Almost always a Chainlink outage — retry in a few minutes</td></tr>
+<tr><td><code>AA33 reverted: EnforcedPause</code></td><td>Paymaster is paused</td><td>Use a different paymaster until ops un-pauses</td></tr>
+<tr><td><code>AA34 ERC20InsufficientAllowance</code></td><td>User didn't approve the paymaster</td><td>Send an <code>approve(paymaster, MAX)</code> userOp first</td></tr>
+<tr><td><code>AA33 reverted 0x</code> (empty data)</td><td>Validation OOG (two Chainlink reads + <code>transferFrom</code> won't fit)</td><td>Set <code>paymasterVerificationGasLimit</code> to &ge; 200 000</td></tr>
+<tr><td><code>AA40 over verificationGasLimit</code></td><td>Validation gas limit too low</td><td>Set <code>paymasterVerificationGasLimit</code> to &ge; 200 000</td></tr>
+<tr><td><code>AA50 paymaster postOp ran OOG</code></td><td>postOp gas limit too low</td><td>Set <code>paymasterPostOpGasLimit</code> to &ge; 120 000</td></tr>
+</table>
+
+<h2>Quoting at scale</h2>
+<p>
+If you're embedding the paymaster in an SDK, batch-quote at startup and
+refresh every ~5 blocks. The on-chain <code>quote()</code> takes ~70k gas
+to read all 5 token configs + Chainlink feeds — fine for one-off,
+expensive for per-userOp. Cache the markup constants client-side and only
+refresh the Chainlink prices.
+</p>
+<p>We do not throttle reads of <code>quote()</code> — feel free to hammer it.</p>
+
+<h2>Trust model</h2>
+<p>You're trusting:</p>
+<ol>
+<li>The Chainlink ETH/USD + token/USD feeds on Base. Industry standard.</li>
+<li>Us (the paymaster owner) not to pause the contract maliciously while
+your userOp is in flight. The 1-block pause window between a bundler
+accepting and submitting your userOp is the only realistic risk; impact
+is your userOp drops, no funds lost.</li>
+<li>The contract's source matches the deployed bytecode. Both Sourcify
+(<code>exact_match</code>) and BaseScan verification confirm this — open
+the BaseScan link above and you can read the source there.</li>
+</ol>
+
+<p>You're <strong>not</strong> trusting us with:</p>
+<ul>
+<li>Your private keys (you sign the userOp).</li>
+<li>Your ETH (we only ever hold the EntryPoint float, never user ETH).</li>
+<li>Your tokens beyond <code>maxTokenCost</code> (validation reverts if our
+quote exceeds the bound you signed).</li>
+</ul>
+
+<h2>Why this exists</h2>
+<p>
+Seneschal runs an Ethereum mainnet block builder and a liquidation
+searcher. The paymaster is a side-project of the same operator,
+offered as a public good on Base: a small markup (7–10%) over the
+Chainlink spot price covers the operator's gas float and Chainlink
+read costs, with anything beyond that going toward keeping the builder
+running.
+</p>
+<p>
+Open-source, MIT-licensed, no SDK lock-in. The contract is roughly
+350 lines of Solidity; you can read every line before integrating.
+</p>
+
+<h2>Support &amp; status</h2>
+<ul>
+<li><strong>Issues / questions</strong>:
+<a href="https://github.com/Rotwang9000/seneschal-paymaster/issues">github.com/Rotwang9000/seneschal-paymaster/issues</a></li>
+<li><strong>Builder + liquidation stats</strong>:
+<a href="https://stats.seneschal.space">stats.seneschal.space</a>
+(paymaster KPIs land here once v2 has a few hundred userOps of history)</li>
+<li><strong>Operator address</strong>:
+<code>0x46Ba634261566CF242c853d1f49511f9268ba674</code>.
+ETH sent here funds the EntryPoint working float — no obligation, but
+appreciated if our paymaster saved you bundler grief.</li>
+</ul>
+
+<footer>
+<p>Seneschal &middot; <a href="https://seneschal.space/">seneschal.space</a> &middot; <a href="https://docs.seneschal.space/">data API docs</a> &middot; <a href="https://stats.seneschal.space/">live stats</a></p>
+</footer>
+
+</main>
+</body>
+</html>
