@@ -193,6 +193,85 @@ describe('CORS headers', () => {
 		expect(r.statusCode).toBeLessThan(300);
 		expect(r.headers['access-control-allow-origin']).toBeDefined();
 	});
+
+	test('OPTIONS preflight for POST endpoint advertises POST + content-type', async () => {
+		// docs.seneschal.space embeds an in-page derive-viewkey form
+		// that POSTs cross-origin. Without POST in allow-methods (and
+		// content-type in allow-headers) browsers reject the request
+		// at the preflight stage, never reaching server-side
+		// validation. Lock the methods + headers list against
+		// regressions.
+		const r = await app.inject({
+			method: 'OPTIONS',
+			url: '/v1/private/derive-viewkey',
+			headers: {
+				origin: 'https://docs.seneschal.space',
+				'access-control-request-method': 'POST',
+				'access-control-request-headers': 'content-type'
+			}
+		});
+		expect(r.statusCode).toBeLessThan(300);
+		const allowMethods = r.headers['access-control-allow-methods'] ?? '';
+		expect(allowMethods).toMatch(/POST/);
+		const allowHeaders = r.headers['access-control-allow-headers'] ?? '';
+		expect(allowHeaders).toMatch(/content-type/i);
+	});
+});
+
+describe('error handler — status-code pass-through', () => {
+	// The error handler must NOT collapse 429 (rate limit) and other
+	// 4xx codes thrown by plugins into 500. Regression: in May 2026
+	// @fastify/rate-limit fired against derive-viewkey and the global
+	// handler returned 500 because it only special-cased TypeError +
+	// statusCode === 400. Production users saw "internal error"
+	// instead of a Retry-After / 429.
+	let errApp;
+	beforeAll(async () => {
+		errApp = await buildApp({
+			db,
+			sparkPath,
+			morphoPath,
+			shadowPath,
+			leaderboardTtlMs: 50,
+			rateLimit: false,
+			logger: false,
+			incomeCfg: { enabled: false, reason: 'disabled-in-tests' }
+		});
+		errApp.get('/__throw429', async () => {
+			const e = new Error('Rate limit exceeded, retry in 1 minute');
+			e.statusCode = 429;
+			throw e;
+		});
+		errApp.get('/__throw401', async () => {
+			const e = new Error('forbidden test');
+			e.statusCode = 401;
+			e.code = 'unauthorized';
+			throw e;
+		});
+		errApp.get('/__throw500', async () => { throw new Error('boom'); });
+	});
+	afterAll(async () => { await errApp?.close?.(); });
+
+	test('preserves 429 from a thrown error and adds retry-after', async () => {
+		const r = await errApp.inject({ method: 'GET', url: '/__throw429' });
+		expect(r.statusCode).toBe(429);
+		expect(r.headers['retry-after']).toBe('60');
+		const body = r.json();
+		expect(body.error.code).toBe('rate_limited');
+		expect(body.error.message).toMatch(/rate limit/i);
+	});
+
+	test('preserves other 4xx status codes with their code label', async () => {
+		const r = await errApp.inject({ method: 'GET', url: '/__throw401' });
+		expect(r.statusCode).toBe(401);
+		expect(r.json().error.code).toBe('unauthorized');
+	});
+
+	test('unrecognised errors still collapse to 500 / internal_error', async () => {
+		const r = await errApp.inject({ method: 'GET', url: '/__throw500' });
+		expect(r.statusCode).toBe(500);
+		expect(r.json().error.code).toBe('internal_error');
+	});
 });
 
 describe('/v1/borrowers (generic)', () => {

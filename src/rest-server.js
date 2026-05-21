@@ -127,8 +127,16 @@ export async function buildApp(options = {}) {
 	const apiVersion = options.apiVersion ?? config.apiVersion;
 
 	await app.register(cors, {
+		// `origin: true` reflects the request origin (no credentials are
+		// used, so this is equivalent to allow-any). POST is allowed so
+		// the in-page derive-viewkey form on docs.seneschal.space (and
+		// any future hosted demo widget) can call the API from the
+		// browser. The endpoints themselves are protected by x402 +
+		// per-route rate limits — CORS isn't the security control.
 		origin: true,
-		methods: ['GET', 'OPTIONS'],
+		methods: ['GET', 'POST', 'OPTIONS'],
+		allowedHeaders: ['content-type', 'x-payment', 'x-watch-token'],
+		exposedHeaders: ['x-payment-response', 'x-ratelimit-limit', 'x-ratelimit-remaining', 'x-ratelimit-reset'],
 		maxAge: 86400
 	});
 
@@ -141,12 +149,32 @@ export async function buildApp(options = {}) {
 		});
 	}
 
-	// Global error handler: validation errors become 400, anything else 500.
+	// Global error handler. Specific status codes (429 rate-limit, 413
+	// payload-too-large, etc.) MUST be preserved — otherwise clients
+	// get a useless 500 with no Retry-After hint. Validation errors
+	// land as 400 with a stable shape; everything unrecognised becomes
+	// 500 to avoid leaking implementation details.
 	app.setErrorHandler((err, req, reply) => {
 		if (err instanceof TypeError || err.statusCode === 400) {
 			req.log.warn({ err: err.message, url: req.url }, 'bad request');
 			return reply.code(400).send({
 				error: { code: 'invalid_request', message: err.message }
+			});
+		}
+		if (err.statusCode === 429) {
+			req.log.warn({ err: err.message, url: req.url }, 'rate limited');
+			return reply
+				.code(429)
+				.header('retry-after', '60')
+				.send({
+					error: { code: 'rate_limited', message: err.message ?? 'rate limit exceeded' }
+				});
+		}
+		if (typeof err.statusCode === 'number' && err.statusCode >= 400 && err.statusCode < 500) {
+			// Pass through other 4xx (validation, auth, payload size).
+			req.log.warn({ err: err.message, url: req.url, statusCode: err.statusCode }, 'client error');
+			return reply.code(err.statusCode).send({
+				error: { code: err.code ?? 'client_error', message: err.message ?? 'client error' }
 			});
 		}
 		req.log.error({ err: err.stack ?? err.message, url: req.url }, 'unhandled');

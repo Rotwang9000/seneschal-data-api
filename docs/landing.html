@@ -5,29 +5,79 @@
 <title>Seneschal — Private Watch + Ethereum block builder</title>
 <meta name="description" content="Get a webhook the moment a Monero or Zcash payment lands at your address, using only the (read-only) view key. $0.02/day idle + $0.005/webhook delivered via x402 USDC on Base. Plus an Ethereum mainnet block builder and free liquidation telemetry.">
 <style>
-body { font: 16px/1.5 system-ui, sans-serif; max-width: 44em; margin: 2.5em auto; padding: 0 1em; color: #111 }
-h1 { font-weight: 600; margin-bottom: .1em }
-h2 { font-weight: 600; font-size: 1.1em; margin-top: 1.8em }
-h3 { font-weight: 600; font-size: 0.95em; margin: 0.8em 0 0.2em; text-transform: uppercase; letter-spacing: 0.03em; color: #555 }
+:root {
+	--bg: #fff;
+	--ink: #111;
+	--muted: #666;
+	--brand: #1462b3;
+	--brand-deep: #0d3a6d;
+	--accent: #9d6cff;
+	--good: #1a7a3a;
+	--warn: #b35900;
+	--danger: #b3261e;
+	--soft: #f4f6fb;
+	--soft-2: #eef2f8;
+	--card-border: #d9e0ec;
+}
+* { box-sizing: border-box }
+body { font: 16px/1.55 system-ui, -apple-system, "Segoe UI", Helvetica, Arial, sans-serif; max-width: 56em; margin: 2em auto; padding: 0 1.1em; color: var(--ink); background: var(--bg) }
+h1 { font-weight: 600; margin: 0 0 .1em }
+h2 { font-weight: 600; font-size: 1.15em; margin-top: 1.9em }
+h3 { font-weight: 600; font-size: 0.95em; margin: 0.8em 0 0.2em; text-transform: uppercase; letter-spacing: 0.04em; color: #555 }
 code { background:#f4f4f4; padding: 1px 5px; border-radius: 3px; font-size: 0.92em }
-a { color: #1462b3 }
-.muted { color: #777; font-size: 0.92em }
-.row { display: flex; gap: 1em; flex-wrap: wrap; margin: 0.8em 0 }
-.row a { padding: 0.4em 0.8em; border: 1px solid #ccc; border-radius: 4px; text-decoration: none; background: #fafafa }
+pre { background: #f4f4f4; padding: 0.8em; border-radius: 4px; overflow-x: auto; font-size: 0.85em; line-height: 1.4 }
+a { color: var(--brand) }
+.muted { color: var(--muted); font-size: 0.92em }
+.row { display: flex; gap: 0.8em; flex-wrap: wrap; margin: 0.8em 0 }
+.row a { padding: 0.4em 0.8em; border: 1px solid #ccc; border-radius: 4px; text-decoration: none; background: #fafafa; font-size: 0.95em }
 .row a:hover { background: #f0f0f0 }
-.hero { background: linear-gradient(135deg, #1462b3 0%, #0d3a6d 100%); color: #fff; padding: 1.6em 1.6em 1.4em; border-radius: 10px; margin: 1em 0 1.4em }
+.hero { background: linear-gradient(135deg, var(--brand) 0%, var(--brand-deep) 100%); color: #fff; padding: 1.6em 1.6em 1.4em; border-radius: 10px; margin: 1em 0 1.4em }
 .hero h2 { margin: 0 0 0.2em; font-size: 1.35em; color: #fff }
-.hero p { margin: 0.4em 0 }
+.hero p { margin: 0.5em 0 }
 .hero a { color: #cfe3ff }
-.hero a.cta { display: inline-block; background: #fff; color: #1462b3; padding: 0.5em 1em; border-radius: 4px; text-decoration: none; font-weight: 600; margin-right: 0.6em; margin-top: 0.8em }
+.hero a.cta { display: inline-block; background: #fff; color: var(--brand); padding: 0.55em 1em; border-radius: 4px; text-decoration: none; font-weight: 600; margin-right: 0.5em; margin-top: 0.5em }
 .hero a.cta:hover { background: #f0f0f0 }
-.hero a.alt { display: inline-block; border: 1px solid rgba(255,255,255,.4); padding: 0.5em 1em; border-radius: 4px; text-decoration: none; margin-top: 0.8em }
+.hero a.alt { display: inline-block; border: 1px solid rgba(255,255,255,.4); padding: 0.55em 1em; border-radius: 4px; text-decoration: none; margin-top: 0.5em }
 .hero a.alt:hover { background: rgba(255,255,255,.1) }
+
+/* Service tiles ----------------------------------------------------- */
+.tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 0.9em; margin: 1em 0 1.4em }
+.tile { background: var(--soft); border: 1px solid var(--card-border); border-radius: 8px; padding: 1em 1em 0.9em; position: relative }
+.tile.free { background: linear-gradient(180deg, #efe6ff 0%, #f7f1ff 100%); border-color: #c5a8ff }
+.tile-head { display: flex; align-items: center; gap: 0.55em; margin: 0 0 0.35em }
+.tile-head svg { flex: 0 0 28px; width: 28px; height: 28px; color: var(--brand) }
+.tile.free .tile-head svg { color: var(--accent) }
+.tile-head h4 { margin: 0; font-size: 1em; font-weight: 600 }
+.tile-price { font-size: 0.85em; color: var(--muted); margin: 0 0 0.5em; letter-spacing: 0.02em; text-transform: uppercase }
+.tile-price strong { color: var(--ink); font-weight: 600 }
+.tile.free .tile-price strong { color: var(--accent) }
+.tile p { margin: 0.4em 0 0; font-size: 0.92em; color: #333 }
+
+/* Flow diagram ------------------------------------------------------ */
+figure.flow { margin: 1em 0 1.4em; padding: 0; }
+figure.flow svg { display: block; width: 100%; height: auto; max-width: 100%; background: var(--soft); border: 1px solid var(--card-border); border-radius: 8px; padding: 0.8em }
+figure.flow figcaption { font-size: 0.85em; color: var(--muted); margin: 0.4em 0 0; text-align: center }
+
+/* Derive form ------------------------------------------------------- */
+#derive-form { background: linear-gradient(180deg, #efe6ff 0%, #f7f1ff 100%); border: 1px solid #c5a8ff; border-radius: 8px; padding: 1em 1em 0.9em; margin: 1em 0 1.4em }
+#derive-form h3 { margin-top: 0; color: var(--accent); text-transform: none; letter-spacing: 0; font-size: 1.05em; font-weight: 600 }
+#derive-form .warn { background: #fff8e6; border: 1px solid #e8d6a3; border-left: 4px solid var(--warn); padding: 0.55em 0.8em; border-radius: 4px; font-size: 0.88em; margin: 0.5em 0; color: #5a3d00 }
+#derive-form label { display: block; font-size: 0.85em; font-weight: 600; margin: 0.7em 0 0.25em; color: #444 }
+#derive-form select, #derive-form textarea { width: 100%; font: inherit; padding: 0.5em 0.6em; border: 1px solid #bfa9e8; border-radius: 4px; background: #fff }
+#derive-form textarea { font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-size: 0.9em; min-height: 4.2em; resize: vertical }
+#derive-form button { background: var(--accent); color: #fff; border: 0; padding: 0.55em 1.1em; border-radius: 4px; font-weight: 600; font-size: 0.95em; cursor: pointer; margin-top: 0.8em }
+#derive-form button:disabled { background: #b29be0; cursor: progress }
+#derive-form button:hover:not(:disabled) { background: #8a52f0 }
+#derive-output { margin-top: 0.9em; font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-size: 0.85em; background: #fff; border: 1px solid #c5a8ff; border-radius: 4px; padding: 0.6em 0.8em; word-break: break-all; display: none }
+#derive-output.show { display: block }
+#derive-output.error { background: #fdecea; border-color: #f5b5af; color: #7a1614 }
+#derive-output label { display: block; font-size: 0.8em; font-weight: 600; color: #555; margin-bottom: 0.25em; text-transform: uppercase; letter-spacing: 0.04em }
+#derive-output .ufvk { user-select: all; padding: 0.4em 0; }
 .facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 0.6em 1.4em; margin: 1em 0 0; padding: 0; list-style: none; font-size: 0.95em }
 .facts li { margin: 0 }
 .facts strong { display: block; color: #fff; font-size: 0.85em; text-transform: uppercase; letter-spacing: 0.03em; font-weight: 600; opacity: 0.85 }
-pre { background: #f4f4f4; padding: 0.8em; border-radius: 4px; overflow-x: auto; font-size: 0.85em; line-height: 1.4 }
 </style>
+
 <h1>Seneschal</h1>
 <p class=muted>Ethereum mainnet block builder &amp; pay-per-call data services. <code>extra_data = Seneschal/0.1</code>.</p>
 
@@ -39,14 +89,8 @@ pre { background: #f4f4f4; padding: 0.8em; border-radius: 4px; overflow-x: auto;
 <li><strong>What you pay</strong>$0.10 in USDC on Base opens a watch with $0.10 of starter credit. Top up later with $0.10 / $1.00 / $5.00 increments via x402.</li>
 <li><strong>What you get</strong>A signed webhook every time the address's incoming balance changes. Every body carries a <code>credit</code> block. We POST a one-shot <code>low_credit</code> warning before you run dry.</li>
 <li><strong>What you keep</strong>Your spend key stays in your wallet. View keys grant read-only visibility only.</li>
-<li><strong>Extras</strong>One-off historical lookups at $0.50 (returns spendable + spent notes). Free Zcash UFVK derivation from a BIP-39 phrase (rate-limited, loud security warning).</li>
+<li><strong>Extras</strong>One-off historical lookups at $0.50 (returns spendable + spent notes). Free Zcash UFVK derivation from a BIP-39 phrase — <a href="#derive-form" style="color:#fff;border-bottom:1px dotted #cfe3ff">try it below</a>.</li>
 </ul>
-
-<h3 style="color:rgba(255,255,255,.85);margin-top:1.2em">Who it's for</h3>
-<p>Merchants accepting <strong>XMR</strong> or <strong>ZEC</strong>; donation pages; tip jars; bots needing payment confirmation; anyone selling something off-platform who doesn't want to run a 100&nbsp;GB full node just to know whether the customer paid. Pennies per quiet month, dollars when you&rsquo;re actually busy.</p>
-
-<h3 style="color:rgba(255,255,255,.85)">Why it's cost-effective</h3>
-<p>Running <code>monerod</code> needs ~120&nbsp;GB of disk and a week of initial sync. <code>zebra</code> is north of 300&nbsp;GB. Public RPCs rate-limit, don't push notifications, and are often down. Light-wallet services charge per month with sign-up flows. Private Watch&rsquo;s prepaid meter means small users pay cents per month even with no traffic, and heavy users still pay only a few dollars after thousands of notifications.</p>
 
 <p style="margin-top:1.2em">
 <a class="cta" href="https://docs.seneschal.space/#private-watch-detail">How it works &raquo;</a>
@@ -54,6 +98,254 @@ pre { background: #f4f4f4; padding: 0.8em; border-radius: 4px; overflow-x: auto;
 <a class="alt" href="https://stats.seneschal.space">Live stats</a>
 </p>
 </section>
+
+<h2 style="margin-top:1em">Four endpoints, one prepaid balance</h2>
+<div class="tiles">
+	<!-- Watch -->
+	<div class="tile">
+		<div class="tile-head">
+			<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+				<path d="M1.5 12s4-7.5 10.5-7.5S22.5 12 22.5 12s-4 7.5-10.5 7.5S1.5 12 1.5 12z"/>
+				<circle cx="12" cy="12" r="3"/>
+				<path d="M19 5l-1.5 1.5M5 5l1.5 1.5"/>
+			</svg>
+			<h4>Create a watch</h4>
+		</div>
+		<p class="tile-price"><strong>$0.10</strong> · x402 · seeds $0.10 credit</p>
+		<p><code>POST /v1/private/watch</code><br>Body: <code>{chain, address, viewKey, webhookUrl}</code>. We poll every 3&nbsp;min, POST a signed event on every balance change.</p>
+	</div>
+
+	<!-- Top-up -->
+	<div class="tile">
+		<div class="tile-head">
+			<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+				<rect x="2.5" y="6" width="19" height="13" rx="2"/>
+				<path d="M2.5 10h19"/>
+				<path d="M6 14.5h4"/>
+				<circle cx="17" cy="14.5" r="2.2"/>
+				<path d="M17 12.8v3.4M15.3 14.5h3.4"/>
+			</svg>
+			<h4>Top up credit</h4>
+		</div>
+		<p class="tile-price"><strong>$0.10 / $1.00 / $5.00</strong> · x402 tiers</p>
+		<p><code>POST /v1/private/topup{,-1,-5}</code><br>$1 buys ~50 idle days; $5 buys ~250. The <code>low_credit</code> webhook tells you when to top up.</p>
+	</div>
+
+	<!-- Historical -->
+	<div class="tile">
+		<div class="tile-head">
+			<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+				<circle cx="11" cy="11" r="6.5"/>
+				<path d="M11 7.5v3.7l2.4 1.5"/>
+				<path d="M16.2 16.2l4.3 4.3"/>
+			</svg>
+			<h4>Historical lookup</h4>
+		</div>
+		<p class="tile-price"><strong>$0.50</strong> · one-off · view key in-memory only</p>
+		<p><code>POST /v1/private/historical</code><br>Returns <code>received / spent / spendable</code> atomic totals and optional per-note breakdown. Auto-detects birthday height for Zcash.</p>
+	</div>
+
+	<!-- Derive (free) -->
+	<div class="tile free">
+		<div class="tile-head">
+			<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+				<circle cx="8" cy="14" r="3.5"/>
+				<path d="M11 11.5l9-9"/>
+				<path d="M17.5 5l3 3"/>
+				<path d="M15 7.5l3 3"/>
+			</svg>
+			<h4>Derive view key</h4>
+		</div>
+		<p class="tile-price"><strong>FREE</strong> · 6/min/IP · Zcash UFVK from a phrase</p>
+		<p><code>POST /v1/private/derive-viewkey</code><br>Forwards a BIP-39 phrase to our local <code>orchard-scanner</code>. <a href="#derive-form">Try it in-page below</a> — loud warning about seed-phrase-over-TLS.</p>
+	</div>
+</div>
+
+<h2>How the credit meter works</h2>
+<figure class="flow">
+<svg viewBox="0 0 760 230" role="img" aria-label="Private Watch credit-meter flow: pay $0.10, watch created with $0.10 credit, drains at $0.02/day + $0.005/webhook, low-credit warning fires at $0.05, top up to extend">
+<defs>
+	<marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+		<path d="M0 0L10 5L0 10z" fill="#1462b3"/>
+	</marker>
+	<marker id="arrow-acc" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+		<path d="M0 0L10 5L0 10z" fill="#9d6cff"/>
+	</marker>
+	<style>
+		.box { fill: #fff; stroke: #1462b3; stroke-width: 1.5 }
+		.box-acc { fill: #fff; stroke: #9d6cff; stroke-width: 1.5 }
+		.box-warn { fill: #fff8e6; stroke: #b35900; stroke-width: 1.5 }
+		.lbl { font: 600 11px system-ui, sans-serif; fill: #111 }
+		.lbl-sm { font: 11px system-ui, sans-serif; fill: #555 }
+		.line { stroke: #1462b3; stroke-width: 1.5; fill: none }
+		.line-acc { stroke: #9d6cff; stroke-width: 1.5; fill: none; stroke-dasharray: 4 3 }
+	</style>
+</defs>
+
+<!-- Step 1: Pay -->
+<rect class="box" x="12" y="40" width="115" height="60" rx="6"/>
+<text class="lbl" x="69.5" y="63" text-anchor="middle">1. Pay $0.10</text>
+<text class="lbl-sm" x="69.5" y="80" text-anchor="middle">x402 (USDC on Base)</text>
+<text class="lbl-sm" x="69.5" y="93" text-anchor="middle">/v1/private/watch</text>
+
+<!-- Step 2: Watch created -->
+<rect class="box" x="155" y="40" width="135" height="60" rx="6"/>
+<text class="lbl" x="222.5" y="60" text-anchor="middle">2. Watch created</text>
+<text class="lbl-sm" x="222.5" y="76" text-anchor="middle">credit = $0.10</text>
+<text class="lbl-sm" x="222.5" y="90" text-anchor="middle">view key encrypted at rest</text>
+
+<!-- Step 3: Drain -->
+<rect class="box" x="320" y="20" width="170" height="105" rx="6"/>
+<text class="lbl" x="405" y="40" text-anchor="middle">3. Credit drains</text>
+<text class="lbl-sm" x="405" y="58" text-anchor="middle">– $0.02 per UTC day (idle)</text>
+<text class="lbl-sm" x="405" y="73" text-anchor="middle">– $0.005 per webhook</text>
+<text class="lbl-sm" x="405" y="93" text-anchor="middle" style="font-style:italic">poller billed each tick</text>
+<text class="lbl-sm" x="405" y="108" text-anchor="middle" style="font-style:italic">(3 min default)</text>
+
+<!-- Step 4: Webhook delivered -->
+<rect class="box" x="520" y="20" width="225" height="60" rx="6"/>
+<text class="lbl" x="632.5" y="40" text-anchor="middle">4. Webhook delivered</text>
+<text class="lbl-sm" x="632.5" y="56" text-anchor="middle">HMAC-SHA256 signed body</text>
+<text class="lbl-sm" x="632.5" y="70" text-anchor="middle">includes credit block</text>
+
+<!-- Step 5: Low credit warning -->
+<rect class="box-warn" x="520" y="100" width="225" height="50" rx="6"/>
+<text class="lbl" x="632.5" y="120" text-anchor="middle">5. Low-credit warning</text>
+<text class="lbl-sm" x="632.5" y="136" text-anchor="middle">fires once when credit &lt; $0.05</text>
+
+<!-- Step 6: Top-up -->
+<rect class="box-acc" x="320" y="160" width="170" height="55" rx="6"/>
+<text class="lbl" x="405" y="180" text-anchor="middle" style="fill:#9d6cff">6. Top up any amount</text>
+<text class="lbl-sm" x="405" y="195" text-anchor="middle">$0.10 / $1 / $5 via x402</text>
+<text class="lbl-sm" x="405" y="208" text-anchor="middle" style="font-style:italic">re-arms low-credit warning</text>
+
+<!-- Arrows -->
+<line class="line" x1="127" y1="70" x2="153" y2="70" marker-end="url(#arrow)"/>
+<line class="line" x1="290" y1="70" x2="318" y2="70" marker-end="url(#arrow)"/>
+<line class="line" x1="490" y1="50" x2="518" y2="50" marker-end="url(#arrow)"/>
+<line class="line" x1="490" y1="95" x2="518" y2="120" marker-end="url(#arrow)"/>
+<path class="line-acc" d="M405 215 Q 405 225 305 225 Q 220 225 220 102" marker-end="url(#arrow-acc)"/>
+</svg>
+<figcaption>Lifecycle of one Private Watch. Credit ticks down per day and per webhook; top-ups extend the meter at any time.</figcaption>
+</figure>
+
+<!-- Derive viewkey form -->
+<section id="derive-form">
+<h3>Try it now — derive a Zcash viewing key from a BIP-39 phrase (free, in-browser)</h3>
+<p class="muted" style="margin:0.2em 0 0.6em">Calls <code>POST /v1/private/derive-viewkey</code> on api.seneschal.space. Returns a read-only Unified Full Viewing Key (UFVK) you can then plug into <code>/v1/private/watch</code> or <code>/v1/private/historical</code>.</p>
+<div class="warn"><strong>Security warning.</strong> Your seed phrase will be sent over TLS to our server. We do <strong>not</strong> log or persist it, but a network attacker between you and us would see the bytes. For maximum safety, derive offline using the <a href="https://github.com/Rotwang9000/orchard-scanner">orchard-scanner</a> binary on a trusted machine and skip this convenience endpoint. Use a <strong>throw-away test seed</strong> if you just want to see it work — the canonical BIP-39 vector <code>abandon abandon … art</code> is fine.</div>
+
+<form id="derive-form-el" onsubmit="return false">
+<label for="derive-chain">Chain</label>
+<select id="derive-chain" name="chain">
+	<option value="zcash">Zcash (Orchard)</option>
+</select>
+
+<label for="derive-network">Network</label>
+<select id="derive-network" name="network">
+	<option value="mainnet">mainnet</option>
+	<option value="testnet">testnet</option>
+</select>
+
+<label for="derive-phrase">BIP-39 phrase (12 or 24 words, space-separated)</label>
+<textarea id="derive-phrase" name="phrase" placeholder="abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon art" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"></textarea>
+
+<button type="submit" id="derive-submit">Derive UFVK</button>
+<a class="row" href="https://api.seneschal.space/v1/private/info" style="display:inline-block;margin-left:0.6em;font-size:0.85em;color:#555;text-decoration:none;border-bottom:1px dotted #999">live route metadata</a>
+</form>
+
+<div id="derive-output" aria-live="polite"></div>
+</section>
+
+<script>
+// In-browser derive-viewkey caller. Wired to the same public endpoint
+// that the curl example uses. CORS is permitted from any origin; the
+// endpoint is rate-limited 6/min/IP server-side, so spamming the form
+// is harmless to other users.
+(function () {
+	'use strict';
+	const ENDPOINT = 'https://api.seneschal.space/v1/private/derive-viewkey';
+	const form = document.getElementById('derive-form-el');
+	const submit = document.getElementById('derive-submit');
+	const out = document.getElementById('derive-output');
+	const phraseEl = document.getElementById('derive-phrase');
+	const chainEl = document.getElementById('derive-chain');
+	const networkEl = document.getElementById('derive-network');
+
+	function renderError(msg) {
+		out.className = 'show error';
+		out.innerHTML = '<label>Error</label>' + escapeHtml(msg);
+	}
+
+	function renderOk(data) {
+		out.className = 'show';
+		const parts = [
+			'<label>Unified Full Viewing Key (read-only)</label>',
+			'<div class="ufvk">' + escapeHtml(data.ufvk || '(none)') + '</div>'
+		];
+		if (data.sapling_fvk) {
+			parts.push('<label style="margin-top:0.6em">Sapling FVK</label><div class="ufvk">' + escapeHtml(data.sapling_fvk) + '</div>');
+		}
+		if (data.transparent_fvk) {
+			parts.push('<label style="margin-top:0.6em">Transparent FVK</label><div class="ufvk">' + escapeHtml(data.transparent_fvk) + '</div>');
+		}
+		if (data.WARNING) {
+			parts.push('<label style="margin-top:0.6em;color:#b35900">Returned warning</label><div style="font-family:system-ui,sans-serif;color:#5a3d00;white-space:pre-wrap;font-size:0.85em">' + escapeHtml(data.WARNING) + '</div>');
+		}
+		out.innerHTML = parts.join('');
+	}
+
+	function escapeHtml(s) {
+		return String(s)
+			.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+			.replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+	}
+
+	form.addEventListener('submit', async function () {
+		const phrase = (phraseEl.value || '').trim();
+		const words = phrase.split(/\s+/).filter(Boolean);
+		if (words.length !== 12 && words.length !== 24) {
+			renderError('Please enter exactly 12 or 24 BIP-39 words. You entered ' + words.length + '.');
+			return;
+		}
+		submit.disabled = true;
+		const originalLabel = submit.textContent;
+		submit.textContent = 'Deriving…';
+		out.className = '';
+		out.innerHTML = '';
+		try {
+			const resp = await fetch(ENDPOINT, {
+				method: 'POST',
+				headers: { 'content-type': 'application/json' },
+				body: JSON.stringify({
+					chain: chainEl.value,
+					network: networkEl.value,
+					phrase: phrase
+				})
+			});
+			const text = await resp.text();
+			let parsed;
+			try { parsed = JSON.parse(text); } catch (_) { parsed = { error: { message: text } }; }
+			if (!resp.ok) {
+				const msg = (parsed && parsed.error && parsed.error.message) || ('HTTP ' + resp.status);
+				if (resp.status === 429) {
+					renderError('Rate limited (6/min/IP). Wait a minute and try again, or run orchard-scanner locally.');
+				}
+				else {
+					renderError(msg);
+				}
+				return;
+			}
+			renderOk(parsed);
+		} catch (err) {
+			renderError('Network error: ' + (err && err.message ? err.message : String(err)));
+		} finally {
+			submit.disabled = false;
+			submit.textContent = originalLabel;
+		}
+	});
+})();
+</script>
 
 <h2>Permissionless Ethereum block builder</h2>
 <p>
