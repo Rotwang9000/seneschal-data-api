@@ -40,6 +40,24 @@ import {
 	createChainCache,
 	CHAIN_QUESTION_REGISTRY
 } from './queries-q-chain.js';
+import {
+	openWatchDb,
+	createWatch as storeCreateWatch
+} from './private-watch-store.js';
+import {
+	parseMasterKey,
+	encryptViewKey,
+	generateWebhookSecret
+} from './private-watch-crypto.js';
+import {
+	createNfptClient,
+	healthCheck as nfptHealthCheck
+} from './private-watch-nfpt.js';
+import {
+	validateWatchRequest,
+	buildPrivateInfo,
+	WATCH_CONSTANTS
+} from './private-watch.js';
 
 // ── Zod schemas ───────────────────────────────────────────────────────
 
@@ -325,6 +343,102 @@ export function buildMcpServer(options = {}) {
 		}
 	});
 
+	// Private watch — view-key payment monitoring for Monero/Zcash.
+	// We mirror the REST POST handler: validate input, encrypt the
+	// view key, create a row, return the token + secret. The watch
+	// itself is driven by the standalone systemd poller; agents see
+	// the deliveries on their own webhook URL.
+	const privateWatchEnabled = Boolean(config.privateWatchEncryptionKey);
+	let watchDb = options.watchDb ?? null;
+	let watchMasterKey = options.watchMasterKey ?? null;
+	let nfptClient = options.nfptClient ?? null;
+	if (privateWatchEnabled && options.disablePrivateWatch !== true) {
+		try { watchMasterKey = watchMasterKey ?? parseMasterKey(config.privateWatchEncryptionKey); }
+		catch { watchMasterKey = null; }
+		try { watchDb = watchDb ?? openWatchDb(options.watchDbPath ?? config.privateWatchDbPath); }
+		catch { watchDb = null; }
+		nfptClient = nfptClient ?? createNfptClient({
+			baseUrl: config.nfptBaseUrl,
+			apiKey: config.nfptApiKey,
+			timeoutMs: config.nfptTimeoutMs,
+			fetchImpl: options.fetchImpl ?? globalThis.fetch
+		});
+	}
+	const privateWatchReady = () => Boolean(watchDb && watchMasterKey && nfptClient);
+
+	server.registerTool('seneschal_private_watch_info', {
+		title: 'Private watch — service metadata',
+		description: 'Returns the current price, supported chains, NFPT upstream health, and security notes for the view-key payment-monitoring service. Free to call.',
+		inputSchema: {}
+	}, async () => {
+		const nfptHealth = privateWatchReady()
+			? await nfptHealthCheck(nfptClient).catch((err) => ({ ok: false, reason: err?.message ?? String(err) }))
+			: { ok: false, reason: 'private watch disabled on this server' };
+		return asContent(buildPrivateInfo({ x402Cfg, nfptHealth }));
+	});
+
+	server.registerTool('seneschal_private_watch_create', {
+		title: 'Create a Monero/Zcash payment watch (paid via x402 at REST)',
+		description: `Subscribe a Monero or Zcash address to view-key-based payment monitoring. ${WATCH_CONSTANTS.DEFAULT_DURATION_DAYS}-day monitoring window by default; the receiver gets a HMAC-signed webhook on every balance change. View keys are AES-256-GCM encrypted at rest. The REST surface at POST /v1/private/watch is paywalled at $0.10 via x402; this MCP tool exposes the same functionality so agents already in a paid MCP session can configure their watches without context-switching.`,
+		inputSchema: {
+			chain: z.enum(['monero', 'zcash']).describe('Which privacy chain to monitor.'),
+			address: z.string().min(1).describe('Public address for the chain. Monero: standard 95-char base58. Zcash: u1*, t1*, t3*, zs1*.'),
+			viewKey: z.string().min(1).describe('Monero: 64-hex private view key. Zcash: UFVK starting with uview1.'),
+			webhookUrl: z.string().min(1).describe('HTTPS endpoint we POST signed webhooks to. Private RFC1918/localhost addresses are rejected.'),
+			durationDays: z.number().int().min(WATCH_CONSTANTS.MIN_DURATION_DAYS).max(WATCH_CONSTANTS.MAX_DURATION_DAYS).optional().describe(`Watch lifetime in days. Default ${WATCH_CONSTANTS.DEFAULT_DURATION_DAYS}.`),
+			birthdayHeight: z.number().int().nonnegative().optional().describe('Zcash only: block height the wallet was created at. Skips re-scanning earlier blocks. Strongly recommended for Zcash to keep scans fast.')
+		}
+	}, async (params) => {
+		if (!privateWatchReady()) {
+			return asContent({
+				error: {
+					code: 'private_watch_not_configured',
+					message: 'PRIVATE_WATCH_ENCRYPTION_KEY or PRIVATE_WATCH_DB not configured on this server.'
+				}
+			});
+		}
+		let input;
+		try {
+			input = validateWatchRequest(params, {
+				allowPrivateWebhooks: config.privateWatchAllowPrivateWebhooks
+			});
+		}
+		catch (err) {
+			return asContent({
+				error: { code: 'invalid_request', message: err?.message ?? String(err) }
+			});
+		}
+		const health = await nfptHealthCheck(nfptClient).catch((err) => ({ ok: false, reason: err?.message ?? String(err) }));
+		if (!health?.ok) {
+			return asContent({
+				error: { code: 'nfpt_upstream_unavailable', message: 'Upstream NFPT scanner not reachable.', nfpt: health }
+			});
+		}
+		const viewKeyCiphertext = encryptViewKey(input.viewKey, watchMasterKey);
+		const webhookSecret = generateWebhookSecret();
+		const created = storeCreateWatch(watchDb, {
+			chain: input.chain,
+			address: input.address,
+			viewKeyCiphertext,
+			webhookUrl: input.webhookUrl,
+			webhookSecret,
+			birthdayHeight: input.birthdayHeight,
+			durationMs: input.durationMs,
+			nowMs: input.now
+		});
+		return asContent({
+			watchId: created.id,
+			watchToken: created.token,
+			webhookSecret,
+			chain: input.chain,
+			address: input.address,
+			expiresAt: new Date(created.expiresAt).toISOString(),
+			pollIntervalSec: WATCH_CONSTANTS.DEFAULT_POLL_INTERVAL_SEC,
+			signatureHeader: 'X-Seneschal-Signature: sha256=<HMAC-SHA256(webhookSecret, body)>',
+			note: 'Watch is now active. Use seneschal_private_watch_info for service metadata; poll status/cancel via REST GET/DELETE /v1/private/watch/:id with header x-watch-token.'
+		});
+	});
+
 	server.registerTool('seneschal_flashloan_providers', {
 		title: 'Flash loan provider catalogue',
 		description: 'Curated catalogue of Ethereum mainnet flash-loan providers (Aave V3, Balancer V2, Morpho Blue, Uniswap V3, FlashBank) with current fee in basis points, contract addresses, qualitative liquidity notes, and per-provider caveats. Helpful for searcher agents picking the cheapest viable provider for a liquidation or arbitrage strategy. The catalogue is editorially open: filter by chain, max fee, or multi-asset support.',
@@ -384,7 +498,9 @@ export function getStaticServerCard() {
 			{ name: 'seneschal_paywall_info', description: 'Free metadata describing the x402 paywall (network, recipient, per-call price) for premium endpoints.' },
 			{ name: 'seneschal_premium_opportunities', description: 'Top at-risk borrowers ranked by expected value, annotated with realised market intel. Paid via x402 at the REST surface.' },
 			{ name: 'seneschal_premium_builder_stats', description: 'Per-builder bid distribution and hourly slot histogram for searcher bundle pricing. Paid via x402 at the REST surface.' },
-			{ name: 'seneschal_q', description: 'Penny Oracle dispatcher — atomic single-fact endpoints across DeFi (liquidatable, at-risk-count, top-builder, builder-share, builder-bid, recent-liquidations, cheapest-flashloan, data-freshness) and privacy chains (xmr/height, xmr/mempool, xmr/fee, xmr/last-block, zec/height, zec/mempool, zec/last-block). All priced at $0.001/call at the REST surface.' }
+			{ name: 'seneschal_q', description: 'Penny Oracle dispatcher — atomic single-fact endpoints across DeFi (liquidatable, at-risk-count, top-builder, builder-share, builder-bid, recent-liquidations, cheapest-flashloan, data-freshness) and privacy chains (xmr/height, xmr/mempool, xmr/fee, xmr/last-block, zec/height, zec/mempool, zec/last-block). All priced at $0.001/call at the REST surface.' },
+			{ name: 'seneschal_private_watch_info', description: 'Free metadata for the view-key payment-watch service: price, supported chains, NFPT upstream health, security notes.' },
+			{ name: 'seneschal_private_watch_create', description: 'Subscribe an XMR/ZEC address (with view key) to webhook-delivered payment monitoring. Paid via x402 at the REST surface; mirrored here so agents in a paid MCP session can configure without context-switching.' }
 		],
 		resources: [],
 		prompts: []

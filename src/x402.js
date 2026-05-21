@@ -81,7 +81,18 @@ export const PREMIUM_ROUTES = Object.freeze([
 		description: r.d,
 		mimeType: 'application/json',
 		priceEnvKey: 'X402_Q_PRICE'
-	}))
+	})),
+	// Private watch — one POST creates a server-side payment monitor
+	// for an XMR/ZEC address using a view key. Priced higher than the
+	// Penny Oracle questions because each watch holds an NFPT scanner
+	// slot for the configured window and burns webhook deliveries.
+	Object.freeze({
+		method: 'POST',
+		path: '/v1/private/watch',
+		description: 'Subscribe a Monero or Zcash address to view-key-based payment monitoring. Body: { chain, address, viewKey, webhookUrl, durationDays?, birthdayHeight? }. Returns { watchId, watchToken, webhookSecret, expiresAt } — the receiver verifies inbound webhooks with HMAC-SHA256(webhookSecret, body).',
+		mimeType: 'application/json',
+		priceEnvKey: 'X402_PRIVATE_WATCH_PRICE'
+	})
 ]);
 
 /**

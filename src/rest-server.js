@@ -49,11 +49,46 @@ import {
 	createChainCache,
 	CHAIN_QUESTION_REGISTRY
 } from './queries-q-chain.js';
+import {
+	openWatchDb,
+	createWatch as storeCreateWatch,
+	getWatch as storeGetWatch,
+	cancelWatch as storeCancelWatch,
+	statsSnapshot as storeStatsSnapshot
+} from './private-watch-store.js';
+import {
+	parseMasterKey,
+	encryptViewKey,
+	generateWebhookSecret
+} from './private-watch-crypto.js';
+import {
+	createNfptClient,
+	healthCheck as nfptHealthCheck
+} from './private-watch-nfpt.js';
+import {
+	validateWatchRequest,
+	buildWatchSummary,
+	buildPrivateInfo,
+	WATCH_CONSTANTS
+} from './private-watch.js';
 
 const ONE_HOUR_MS = 60 * 60 * 1000;
 const ONE_DAY_MS = 24 * ONE_HOUR_MS;
 const MAX_HISTORY_WINDOW_MS = 90 * ONE_DAY_MS;
 const DEFAULT_HISTORY_WINDOW_MS = 30 * ONE_DAY_MS;
+
+// Try to ping the NFPT scanner; never throw — return the structured
+// failure so callers (rest endpoints) can surface it without taking
+// the route down. Used by /v1/private/info + the POST handler.
+async function safeHealth(nfptClient) {
+	try { return await nfptHealthCheck(nfptClient); }
+	catch (err) { return { ok: false, reason: err?.message ?? String(err) }; }
+}
+
+function safeHost(url) {
+	try { return new URL(url).hostname; }
+	catch { return null; }
+}
 
 // Bound the time window the history endpoint will consider. Caps at
 // 90 days because beyond that the daily-bucket payload starts to
@@ -153,7 +188,11 @@ export async function buildApp(options = {}) {
 			'GET /v1/q (penny-oracle catalogue, free)',
 			'GET /v1/q/* (penny-oracle atomic-fact endpoints, x402 paywall)',
 			'GET /v1/q/xmr/* (Monero atomic-fact endpoints, x402 paywall)',
-			'GET /v1/q/zec/* (Zcash atomic-fact endpoints, x402 paywall)'
+			'GET /v1/q/zec/* (Zcash atomic-fact endpoints, x402 paywall)',
+			'POST /v1/private/watch (x402 paywall — view-key payment monitor)',
+			'GET /v1/private/watch/:id (owner-only, free poll)',
+			'DELETE /v1/private/watch/:id (owner-only, free cancel)',
+			'GET /v1/private/info (free service metadata)'
 		],
 		paywall: paywallSummary
 	}));
@@ -465,6 +504,142 @@ export async function buildApp(options = {}) {
 			}
 		});
 	}
+
+	// ── Private watch (view-key based payment monitoring) ─────────
+	// One x402-paid POST creates a server-side scanner subscription
+	// for a Monero or Zcash address. The scanner work happens in NFPT
+	// (local box at 3555); we own state, paywall, webhook signing.
+	const privateWatchEnabled = Boolean(config.privateWatchEncryptionKey);
+	let watchDb = options.watchDb ?? null;
+	let watchMasterKey = options.watchMasterKey ?? null;
+	let nfptClient = options.nfptClient ?? null;
+	if (privateWatchEnabled && options.disablePrivateWatch !== true) {
+		try {
+			watchMasterKey = watchMasterKey ?? parseMasterKey(config.privateWatchEncryptionKey);
+		}
+		catch (err) {
+			app.log.error({ err: err?.message ?? String(err) }, 'private-watch: PRIVATE_WATCH_ENCRYPTION_KEY invalid — POST /v1/private/watch will 503');
+			watchMasterKey = null;
+		}
+		try {
+			watchDb = watchDb ?? openWatchDb(options.watchDbPath ?? config.privateWatchDbPath);
+		}
+		catch (err) {
+			app.log.error({ err: err?.message ?? String(err), path: config.privateWatchDbPath }, 'private-watch: failed to open watch DB');
+			watchDb = null;
+		}
+		nfptClient = nfptClient ?? createNfptClient({
+			baseUrl: config.nfptBaseUrl,
+			apiKey: config.nfptApiKey,
+			timeoutMs: config.nfptTimeoutMs,
+			fetchImpl: options.fetchImpl ?? globalThis.fetch
+		});
+	}
+
+	const privateWatchReady = () => Boolean(watchDb && watchMasterKey && nfptClient);
+
+	function privateNotConfigured(reply, extra = {}) {
+		reply.code(503).send({
+			error: {
+				code: 'private_watch_not_configured',
+				message: 'POST /v1/private/watch requires PRIVATE_WATCH_ENCRYPTION_KEY and a writable PRIVATE_WATCH_DB (see /v1/private/info).',
+				...extra
+			}
+		});
+	}
+
+	app.get('/v1/private/info', async () => {
+		const nfptHealth = privateWatchReady()
+			? await safeHealth(nfptClient)
+			: { ok: false, reason: 'private watch disabled' };
+		return buildPrivateInfo({ x402Cfg, nfptHealth });
+	});
+
+	app.get('/v1/private/health', async () => {
+		if (!watchDb) return { enabled: false, reason: 'watch DB not opened' };
+		return {
+			enabled: privateWatchReady(),
+			stats: storeStatsSnapshot(watchDb)
+		};
+	});
+
+	app.post('/v1/private/watch', async (req, reply) => {
+		if (requirePaywall(reply)) return;
+		if (!privateWatchReady()) {
+			return privateNotConfigured(reply);
+		}
+		let input;
+		try {
+			input = validateWatchRequest(req.body ?? {}, {
+				allowPrivateWebhooks: config.privateWatchAllowPrivateWebhooks
+			});
+		}
+		catch (err) {
+			return reply.code(400).send({
+				error: { code: 'invalid_request', message: err?.message ?? String(err) }
+			});
+		}
+		// Upstream sanity check — if NFPT is dead we refuse the
+		// payment-collection step entirely rather than charge the
+		// user for a watch we can't service.
+		const health = await safeHealth(nfptClient);
+		if (!health?.ok) {
+			return reply.code(502).send({
+				error: {
+					code: 'nfpt_upstream_unavailable',
+					message: 'Upstream NFPT scanner is not reachable; refusing to create watch.',
+					nfpt: health
+				}
+			});
+		}
+		const viewKeyCiphertext = encryptViewKey(input.viewKey, watchMasterKey);
+		const webhookSecret = generateWebhookSecret();
+		const created = storeCreateWatch(watchDb, {
+			chain: input.chain,
+			address: input.address,
+			viewKeyCiphertext,
+			webhookUrl: input.webhookUrl,
+			webhookSecret,
+			birthdayHeight: input.birthdayHeight,
+			durationMs: input.durationMs,
+			nowMs: input.now
+		});
+		req.log.info({
+			watchId: created.id,
+			chain: input.chain,
+			webhookHost: safeHost(input.webhookUrl),
+			durationDays: input.durationDays
+		}, 'private-watch: created');
+		return {
+			watchId: created.id,
+			watchToken: created.token,
+			webhookSecret,
+			chain: input.chain,
+			address: input.address,
+			expiresAt: new Date(created.expiresAt).toISOString(),
+			pollIntervalSec: WATCH_CONSTANTS.DEFAULT_POLL_INTERVAL_SEC,
+			signatureHeader: 'X-Seneschal-Signature: sha256=<HMAC-SHA256(webhookSecret, body)>'
+		};
+	});
+
+	app.get('/v1/private/watch/:id', async (req, reply) => {
+		if (!privateWatchReady()) return privateNotConfigured(reply);
+		const token = req.headers['x-watch-token'];
+		const row = storeGetWatch(watchDb, req.params.id, token);
+		if (!row) return reply.code(404).send({ error: { code: 'not_found', message: 'watch not found' } });
+		if (row.error === 'forbidden') {
+			return reply.code(403).send({ error: { code: 'forbidden', message: 'watch token mismatch' } });
+		}
+		return buildWatchSummary(row);
+	});
+
+	app.delete('/v1/private/watch/:id', async (req, reply) => {
+		if (!privateWatchReady()) return privateNotConfigured(reply);
+		const token = req.headers['x-watch-token'];
+		const ok = storeCancelWatch(watchDb, req.params.id, token);
+		if (!ok) return reply.code(404).send({ error: { code: 'not_found', message: 'watch not found or forbidden' } });
+		return { cancelled: true };
+	});
 
 	// Public catalogue: free GET that lists every Penny Oracle
 	// question and its declared input parameters. Lets agents

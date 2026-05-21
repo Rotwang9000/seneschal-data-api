@@ -131,7 +131,45 @@ export const config = Object.freeze({
 	// daily snapshots to. The REST server reads this read-only to
 	// power historical charts. Empty path = "no history yet, frontend
 	// hides the chart".
-	incomeSnapshotsPath: asString('SENESCHAL_INCOME_SNAPSHOTS', '/var/lib/seneschal-income/snapshots.jsonl')
+	incomeSnapshotsPath: asString('SENESCHAL_INCOME_SNAPSHOTS', '/var/lib/seneschal-income/snapshots.jsonl'),
+
+	// ── Private watch (Phase 2 — view-key payment monitoring) ─────────
+	// The data-api wraps the local NFPT wallet-scanner so agents can
+	// pay one x402 fee for a 7-day "ping me when XMR/ZEC lands at this
+	// address" subscription. View keys are encrypted at rest with a
+	// 32-byte master key (PRIVATE_WATCH_ENCRYPTION_KEY); webhooks are
+	// HMAC-SHA256 signed with a per-watch secret.
+	//
+	// NFPT runs on the same host as monerod/zebra (local box, port
+	// 3555) and is reverse-tunnelled onto fin4's loopback by the same
+	// systemd unit that exposes 18081 + 8232.
+	nfptBaseUrl: asString('NFPT_BASE_URL', 'http://127.0.0.1:3555'),
+	nfptApiKey: asString('NFPT_API_KEY', 'development-key-for-testing'),
+	nfptTimeoutMs: asInt('NFPT_TIMEOUT_MS', 30_000),
+	// Path to the watch SQLite DB. Writers: rest-server (new watch) +
+	// poller (state updates). Reader: rest-server (status reads).
+	// Defaults to the same /var/lib base as income-history so the
+	// systemd unit can grant a single writable directory.
+	privateWatchDbPath: asString('PRIVATE_WATCH_DB', '/var/lib/seneschal-data-api/private-watches.db'),
+	// 64 hex chars = 32 bytes. The watch creation endpoint refuses to
+	// accept requests until this is set, so a misconfigured deploy
+	// can't silently store view keys in cleartext.
+	privateWatchEncryptionKey: asString('PRIVATE_WATCH_ENCRYPTION_KEY', ''),
+	// Allow http://127.0.0.1 / private RFC1918 webhook URLs — strictly
+	// for local development. Production deployments leave this off so
+	// SSRF protection is in force.
+	privateWatchAllowPrivateWebhooks: asString('PRIVATE_WATCH_ALLOW_PRIVATE_WEBHOOKS', '') === '1',
+	// How often the poller drives a tick. Each tick polls every active
+	// watch; NFPT detaches scanners after 5 min idle, so we stay
+	// comfortably below.
+	privateWatchPollIntervalSec: asInt('PRIVATE_WATCH_POLL_INTERVAL_SEC', 180),
+	// HTTP timeout for outbound webhook POSTs. Set short — receivers
+	// should accept fast and process async.
+	privateWatchWebhookTimeoutMs: asInt('PRIVATE_WATCH_WEBHOOK_TIMEOUT_MS', 8_000),
+	// x402 price for POST /v1/private/watch. One tier, $0.10 = 7-day
+	// monitor for one (chain, address, viewKey, webhookUrl). Override
+	// via env without touching code if we want a promo price.
+	x402PrivateWatchPrice: asString('X402_PRIVATE_WATCH_PRICE', '$0.10')
 });
 
 export default config;

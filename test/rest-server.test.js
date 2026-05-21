@@ -69,7 +69,11 @@ beforeAll(async () => {
 		shadowPath,
 		leaderboardTtlMs: 50,
 		rateLimit: false,
-		logger: false
+		logger: false,
+		// Disable income RPC reads in unit tests — those are exercised
+		// against fake balances in income.test.js + a dedicated mocked
+		// suite below.
+		incomeCfg: { enabled: false, reason: 'disabled-in-tests' }
 	});
 });
 
@@ -221,6 +225,21 @@ describe('paywall surface (x402 disabled)', () => {
 		expect(body.reason).toMatch(/RECIPIENT_ADDRESS/);
 	});
 
+	test('GET /.well-known/x402 returns 404 when paywall is off', async () => {
+		const r = await call('GET', '/.well-known/x402');
+		expect(r.statusCode).toBe(404);
+		const body = r.json();
+		expect(body.error.code).toBe('paywall_not_configured');
+	});
+
+	test('GET /v1/stats/income returns 503 when income disabled', async () => {
+		const r = await call('GET', '/v1/stats/income');
+		expect(r.statusCode).toBe(503);
+		const body = r.json();
+		expect(body.enabled).toBe(false);
+		expect(body.reason).toMatch(/disabled-in-tests/);
+	});
+
 	test('GET / advertises paywall slot but resolves to null on free server', async () => {
 		const r = await call('GET', '/');
 		const body = r.json();
@@ -237,6 +256,13 @@ describe('paywall surface (x402 disabled)', () => {
 		const body = r.json();
 		expect(body.error.code).toBe('paywall_not_configured');
 		expect(body.error.message).toMatch(/X402_RECIPIENT_ADDRESS/);
+	});
+
+	test('GET /v1/premium/builder-stats answers 503 with paywall_not_configured', async () => {
+		const r = await call('GET', '/v1/premium/builder-stats');
+		expect(r.statusCode).toBe(503);
+		const body = r.json();
+		expect(body.error.code).toBe('paywall_not_configured');
 	});
 });
 
@@ -260,6 +286,7 @@ describe('paywall surface (x402 enabled, in-process)', () => {
 			rateLimit: false,
 			logger: false,
 			installX402: false,
+			incomeCfg: { enabled: false, reason: 'disabled-in-tests' },
 			x402Cfg: {
 				enabled: true,
 				recipient: '0x1234567890abcdef1234567890abcdef12345678',
@@ -304,6 +331,19 @@ describe('paywall surface (x402 enabled, in-process)', () => {
 		expect(body.routes.length).toBe(1);
 	});
 
+	test('GET /.well-known/x402 returns discovery manifest', async () => {
+		const r = await appPaid.inject({ method: 'GET', url: '/.well-known/x402' });
+		expect(r.statusCode).toBe(200);
+		const body = r.json();
+		expect(body.protocol).toBe('x402');
+		expect(body.payTo).toBe('0x1234567890abcdef1234567890abcdef12345678');
+		expect(body.service).toBeDefined();
+		expect(body.service.name).toMatch(/Seneschal/);
+		expect(body.service.homepage).toBe('https://seneschal.space');
+		expect(body.service.api_root).toBe('https://api.seneschal.space');
+		expect(body.routes.length).toBe(1);
+	});
+
 	test('GET /v1/premium/opportunities returns the feed when middleware not installed', async () => {
 		// With installX402:false, the route handler runs without the
 		// paywall enforcing 402 — but the feed itself still works,
@@ -314,6 +354,549 @@ describe('paywall surface (x402 enabled, in-process)', () => {
 		const body = r.json();
 		expect(Array.isArray(body.opportunities)).toBe(true);
 		expect(body.assumptions.liquidation_bonus_default).toBeCloseTo(0.06);
+	});
+
+	test('GET /v1/premium/builder-stats returns the histogram when middleware not installed', async () => {
+		const r = await appPaid.inject({ method: 'GET', url: '/v1/premium/builder-stats?window_ms=86400000' });
+		expect(r.statusCode).toBe(200);
+		const body = r.json();
+		expect(body.window_ms).toBe(24 * 60 * 60 * 1000);
+		expect(Array.isArray(body.builders)).toBe(true);
+		expect(Array.isArray(body.hourly_distribution)).toBe(true);
+		expect(body.hourly_distribution).toHaveLength(24);
+	});
+});
+
+describe('penny oracle — /v1/q/*', () => {
+	test('GET /v1/q is free even without paywall — returns catalogue', async () => {
+		const r = await app.inject({ method: 'GET', url: '/v1/q' });
+		expect(r.statusCode).toBe(200);
+		const body = r.json();
+		expect(Array.isArray(body.questions)).toBe(true);
+		const names = body.questions.map(q => q.name).sort();
+		expect(names).toContain('liquidatable');
+		expect(names).toContain('top-builder');
+		expect(names).toContain('data-freshness');
+		expect(body.price_per_call).toBeNull(); // paywall off in this app
+	});
+
+	test('GET /v1/q/liquidatable 503s when paywall is off', async () => {
+		const r = await app.inject({ method: 'GET', url: `/v1/q/liquidatable?addr=0x${'1'.repeat(40)}` });
+		expect(r.statusCode).toBe(503);
+		expect(r.json().error.code).toBe('paywall_not_configured');
+	});
+});
+
+describe('penny oracle — paywall enabled', () => {
+	let appPaid2;
+	beforeAll(async () => {
+		appPaid2 = await buildApp({
+			db,
+			sparkPath,
+			morphoPath,
+			shadowPath,
+			leaderboardTtlMs: 50,
+			rateLimit: false,
+			logger: false,
+			installX402: false,
+			incomeCfg: { enabled: false, reason: 'disabled-in-tests' },
+			x402Cfg: {
+				enabled: true,
+				recipient: '0x1234567890abcdef1234567890abcdef12345678',
+				network: 'eip155:8453',
+				facilitatorUrl: 'https://x402.org/facilitator',
+				routes: {
+					'GET /v1/q/liquidatable': {
+						accepts: {
+							scheme: 'exact',
+							payTo: '0x1234567890abcdef1234567890abcdef12345678',
+							price: '$0.001',
+							network: 'eip155:8453',
+							maxTimeoutSeconds: 120
+						},
+						description: 'q: liquidatable',
+						mimeType: 'application/json'
+					}
+				}
+			}
+		});
+	});
+	afterAll(async () => { await appPaid2?.close?.(); });
+
+	test('GET /v1/q returns price per call once paywall is set', async () => {
+		const r = await appPaid2.inject({ method: 'GET', url: '/v1/q' });
+		expect(r.statusCode).toBe(200);
+		const body = r.json();
+		expect(body.price_per_call).toBe('$0.001');
+		expect(body.network).toBe('eip155:8453');
+	});
+
+	test('GET /v1/q/liquidatable returns flat shape', async () => {
+		// installX402:false means we skip the 402 challenge; the
+		// handler runs, exercising the SQL + shape stability. ADDR_A
+		// is the fixture's HF=0.99 liquidatable row.
+		const r = await appPaid2.inject({ method: 'GET', url: `/v1/q/liquidatable?addr=${ADDR_A}` });
+		expect(r.statusCode).toBe(200);
+		const body = r.json();
+		expect(body.found).toBe(true);
+		expect(typeof body.hf).toBe('number');
+		expect(typeof body.debt_usd).toBe('number');
+		expect(body.protocol).toBe('aave');
+		expect(body.liquidatable).toBe(true);
+		expect(typeof body.last_seen_ms).toBe('number');
+	});
+
+	test('GET /v1/q/at-risk-count answers default', async () => {
+		const r = await appPaid2.inject({ method: 'GET', url: '/v1/q/at-risk-count' });
+		expect(r.statusCode).toBe(200);
+		const body = r.json();
+		expect(typeof body.count).toBe('number');
+		expect(typeof body.total_debt_usd).toBe('number');
+		expect(body.max_hf).toBe(1.05);
+	});
+
+	test('GET /v1/q/cheapest-flashloan returns provider', async () => {
+		const r = await appPaid2.inject({ method: 'GET', url: '/v1/q/cheapest-flashloan?asset=WETH' });
+		expect(r.statusCode).toBe(200);
+		const body = r.json();
+		expect(body.found).toBe(true);
+		expect(typeof body.provider).toBe('string');
+		expect(typeof body.fee_bps).toBe('number');
+	});
+
+	test('GET /v1/q/data-freshness for borrower_snapshot', async () => {
+		const r = await appPaid2.inject({ method: 'GET', url: '/v1/q/data-freshness?source=borrower_snapshot' });
+		expect(r.statusCode).toBe(200);
+		const body = r.json();
+		expect(body.source).toBe('borrower_snapshot');
+		// `age_s` can be null only when the table is empty; the
+		// fixture seeded rows so it must be numeric.
+		expect(typeof body.age_s).toBe('number');
+	});
+
+	test('GET /v1/q/top-builder over 7d', async () => {
+		const r = await appPaid2.inject({ method: 'GET', url: '/v1/q/top-builder?window=7d' });
+		expect(r.statusCode).toBe(200);
+		const body = r.json();
+		expect(body.window).toBe('7d');
+		expect(typeof body.total_slots).toBe('number');
+	});
+
+	test('validation: malformed addr → 400', async () => {
+		const r = await appPaid2.inject({ method: 'GET', url: '/v1/q/liquidatable?addr=nope' });
+		expect(r.statusCode).toBe(400);
+	});
+});
+
+describe('penny oracle — privacy-chain routes', () => {
+	let appChain;
+	const stubResults = {
+		'get_info': { result: { height: 100, target_height: 0, synchronized: true, tx_pool_size: 7, top_block_hash: 'h' } },
+		'get_fee_estimate': { result: { fee: 1234, quantization_mask: 10 } },
+		'get_last_block_header': { result: { block_header: { height: 100, hash: 'h', timestamp: 1, difficulty: 2, block_size: 3 } } },
+		'getblockchaininfo': { result: { blocks: 200, headers: 200, estimatedheight: 200, verificationprogress: 0.9999, bestblockhash: 'b', chain: 'main' } },
+		'getmempoolinfo': { result: { size: 9, bytes: 1000 } },
+		'getbestblockhash': { result: 'beef' },
+		'getblockheader': { result: { height: 200, time: 1, difficulty: 1, size: 1 } }
+	};
+	const stubFetch = async (_url, opts) => {
+		const body = JSON.parse(opts.body);
+		if (stubResults[body.method]) {
+			return { ok: true, status: 200, json: async () => stubResults[body.method] };
+		}
+		return { ok: true, status: 200, json: async () => ({ error: { message: 'unknown' } }) };
+	};
+
+	beforeAll(async () => {
+		appChain = await buildApp({
+			db,
+			sparkPath,
+			morphoPath,
+			shadowPath,
+			rateLimit: false,
+			logger: false,
+			installX402: false,
+			incomeCfg: { enabled: false, reason: 'disabled-in-tests' },
+			chainRpcUrls: { monero: 'http://stub-monero', zcash: 'http://stub-zcash' },
+			chainRpcConfigured: { monero: true, zcash: true },
+			fetchImpl: stubFetch,
+			x402Cfg: {
+				enabled: true,
+				recipient: '0x1234567890abcdef1234567890abcdef12345678',
+				network: 'eip155:8453',
+				facilitatorUrl: 'https://x402.org/facilitator',
+				routes: {
+					'GET /v1/q/xmr/height': {
+						accepts: { scheme: 'exact', payTo: '0x1234567890abcdef1234567890abcdef12345678', price: '$0.001', network: 'eip155:8453', maxTimeoutSeconds: 120 },
+						description: 'q: xmr/height', mimeType: 'application/json'
+					}
+				}
+			}
+		});
+	});
+	afterAll(async () => { await appChain?.close?.(); });
+
+	test('GET /v1/q lists chain questions with availability', async () => {
+		const r = await appChain.inject({ method: 'GET', url: '/v1/q' });
+		expect(r.statusCode).toBe(200);
+		const body = r.json();
+		const xmrHeight = body.questions.find(q => q.name === 'xmr/height');
+		expect(xmrHeight).toBeDefined();
+		expect(xmrHeight.available).toBe(true);
+		expect(xmrHeight.category).toBe('monero');
+		expect(body.chain_status).toEqual({ monero: true, zcash: true });
+	});
+
+	test('GET /v1/q/xmr/height returns flat shape', async () => {
+		const r = await appChain.inject({ method: 'GET', url: '/v1/q/xmr/height' });
+		expect(r.statusCode).toBe(200);
+		const body = r.json();
+		expect(body.chain).toBe('monero');
+		expect(body.height).toBe(100);
+		expect(body.synchronized).toBe(true);
+	});
+
+	test('GET /v1/q/zec/last-block fans out to two RPCs', async () => {
+		const r = await appChain.inject({ method: 'GET', url: '/v1/q/zec/last-block' });
+		expect(r.statusCode).toBe(200);
+		const body = r.json();
+		expect(body.chain).toBe('zcash');
+		expect(body.hash).toBe('beef');
+		expect(body.height).toBe(200);
+	});
+
+	test('second call hits cache (no fresh upstream)', async () => {
+		const r1 = await appChain.inject({ method: 'GET', url: '/v1/q/xmr/mempool' });
+		const r2 = await appChain.inject({ method: 'GET', url: '/v1/q/xmr/mempool' });
+		const b1 = r1.json();
+		const b2 = r2.json();
+		expect(b1._cache).toBe('miss');
+		expect(b2._cache).toBe('hit');
+		expect(b1.count).toBe(b2.count);
+	});
+
+	test('unconfigured chain → 503', async () => {
+		const appUnset = await buildApp({
+			db,
+			sparkPath,
+			morphoPath,
+			shadowPath,
+			rateLimit: false,
+			logger: false,
+			installX402: false,
+			incomeCfg: { enabled: false, reason: 'disabled-in-tests' },
+			chainRpcConfigured: { monero: false, zcash: false },
+			x402Cfg: {
+				enabled: true,
+				recipient: '0x1234567890abcdef1234567890abcdef12345678',
+				network: 'eip155:8453',
+				facilitatorUrl: 'https://x402.org/facilitator',
+				routes: {}
+			}
+		});
+		const r = await appUnset.inject({ method: 'GET', url: '/v1/q/xmr/height' });
+		expect(r.statusCode).toBe(503);
+		expect(r.json().error.code).toBe('chain_not_configured');
+		await appUnset.close();
+	});
+
+	test('failing upstream → 502 with chain_rpc_failed', async () => {
+		const appBad = await buildApp({
+			db,
+			sparkPath,
+			morphoPath,
+			shadowPath,
+			rateLimit: false,
+			logger: false,
+			installX402: false,
+			incomeCfg: { enabled: false, reason: 'disabled-in-tests' },
+			chainRpcUrls: { monero: 'http://stub', zcash: 'http://stub' },
+			chainRpcConfigured: { monero: true, zcash: true },
+			fetchImpl: async () => { throw new Error('connection refused'); },
+			x402Cfg: {
+				enabled: true,
+				recipient: '0x1234567890abcdef1234567890abcdef12345678',
+				network: 'eip155:8453',
+				facilitatorUrl: 'https://x402.org/facilitator',
+				routes: {}
+			}
+		});
+		const r = await appBad.inject({ method: 'GET', url: '/v1/q/xmr/height' });
+		expect(r.statusCode).toBe(502);
+		expect(r.json().error.code).toBe('chain_rpc_failed');
+		await appBad.close();
+	});
+});
+
+describe('private watch routes', () => {
+	let appWatch;
+	const webhookHits = [];
+	const watchPort = 'https://example.com/hook';
+	// NFPT stub: lightwallet-status -> ok; monero start -> 202 + ids;
+	// monero poll -> running scan; everything else -> 200 empty.
+	let scriptedMonero = [
+		{ status: 200, body: { success: true, data: { lightwallet: { connected: true, blockHeight: 3_400_000 } } } }
+	];
+	let moneroIdx = 0;
+	function nfptStubFetch(url, init) {
+		const path = String(url).replace(/^https?:\/\/[^/]+/u, '');
+		if (path === '/api/wallet-scanner/lightwallet/status') {
+			return Promise.resolve({
+				status: 200,
+				text: async () => JSON.stringify({ success: true, data: { lightwallet: { connected: true, blockHeight: 3_400_000 } } })
+			});
+		}
+		const next = scriptedMonero[Math.min(moneroIdx, scriptedMonero.length - 1)];
+		moneroIdx += 1;
+		return Promise.resolve({
+			status: next.status,
+			text: async () => JSON.stringify(next.body)
+		});
+	}
+
+	function watchFetch(url, init) {
+		// Composite stub: NFPT-targeted URLs go through the scripted
+		// stub; webhook-target URLs (example.com) capture the post.
+		if (String(url).startsWith('http://nfpt')) return nfptStubFetch(url, init);
+		webhookHits.push({ url, init });
+		return Promise.resolve({ status: 200, text: async () => 'ok' });
+	}
+
+	beforeAll(async () => {
+		const masterKey = Buffer.from('11'.repeat(32), 'hex');
+		const { openWatchDb } = await import('../src/private-watch-store.js');
+		const watchDb = openWatchDb(':memory:');
+		const { createNfptClient } = await import('../src/private-watch-nfpt.js');
+		const nfptClient = createNfptClient({
+			baseUrl: 'http://nfpt',
+			apiKey: 'k',
+			fetchImpl: watchFetch
+		});
+		appWatch = await buildApp({
+			db, sparkPath, morphoPath, shadowPath,
+			rateLimit: false,
+			logger: false,
+			installX402: false,
+			incomeCfg: { enabled: false, reason: 'disabled-in-tests' },
+			watchDb,
+			watchMasterKey: masterKey,
+			nfptClient,
+			x402Cfg: {
+				enabled: true,
+				recipient: '0x1234567890abcdef1234567890abcdef12345678',
+				network: 'eip155:8453',
+				facilitatorUrl: 'https://x402.org/facilitator',
+				routes: {
+					'POST /v1/private/watch': {
+						accepts: { scheme: 'exact', payTo: '0x1234567890abcdef1234567890abcdef12345678', price: '$0.10', network: 'eip155:8453', maxTimeoutSeconds: 120 },
+						description: 'private watch',
+						mimeType: 'application/json'
+					}
+				}
+			}
+		});
+	});
+
+	afterAll(async () => { await appWatch?.close?.(); });
+
+	test('GET /v1/private/info returns price + chains + upstream health', async () => {
+		moneroIdx = 0;
+		const r = await appWatch.inject({ method: 'GET', url: '/v1/private/info' });
+		expect(r.statusCode).toBe(200);
+		const body = r.json();
+		expect(body.chains).toEqual(['monero', 'zcash']);
+		expect(body.pricing.watch_creation).toBe('$0.10');
+		expect(body.upstream.ok).toBe(true);
+	});
+
+	test('GET /v1/private/health returns stats only', async () => {
+		const r = await appWatch.inject({ method: 'GET', url: '/v1/private/health' });
+		expect(r.statusCode).toBe(200);
+		const body = r.json();
+		expect(body.enabled).toBe(true);
+		expect(body.stats.by_chain).toBeDefined();
+	});
+
+	test('POST /v1/private/watch creates a Monero watch', async () => {
+		moneroIdx = 0;
+		const r = await appWatch.inject({
+			method: 'POST',
+			url: '/v1/private/watch',
+			payload: {
+				chain: 'monero',
+				address: '4' + 'A'.repeat(94),
+				viewKey: '5'.repeat(64),
+				webhookUrl: watchPort
+			}
+		});
+		expect(r.statusCode).toBe(200);
+		const body = r.json();
+		expect(body.watchId).toMatch(/^[0-9a-f-]{36}$/u);
+		expect(body.watchToken.length).toBeGreaterThan(20);
+		expect(body.webhookSecret).toMatch(/^[0-9a-f]{64}$/u);
+		expect(body.chain).toBe('monero');
+		expect(body.signatureHeader).toMatch(/HMAC-SHA256/);
+	});
+
+	test('POST /v1/private/watch rejects invalid chain (400)', async () => {
+		moneroIdx = 0;
+		const r = await appWatch.inject({
+			method: 'POST',
+			url: '/v1/private/watch',
+			payload: { chain: 'btc', address: 'x', viewKey: 'y', webhookUrl: 'https://example.com' }
+		});
+		expect(r.statusCode).toBe(400);
+		expect(r.json().error.code).toBe('invalid_request');
+	});
+
+	test('POST /v1/private/watch rejects loopback webhook (400 SSRF guard)', async () => {
+		moneroIdx = 0;
+		const r = await appWatch.inject({
+			method: 'POST',
+			url: '/v1/private/watch',
+			payload: {
+				chain: 'monero',
+				address: '4' + 'A'.repeat(94),
+				viewKey: '5'.repeat(64),
+				webhookUrl: 'http://127.0.0.1:6379/'
+			}
+		});
+		expect(r.statusCode).toBe(400);
+	});
+
+	test('GET /v1/private/watch/:id needs the watch token', async () => {
+		moneroIdx = 0;
+		// create
+		const c = await appWatch.inject({
+			method: 'POST',
+			url: '/v1/private/watch',
+			payload: {
+				chain: 'monero',
+				address: '4' + 'B'.repeat(94),
+				viewKey: '6'.repeat(64),
+				webhookUrl: watchPort
+			}
+		});
+		const { watchId, watchToken } = c.json();
+		// no token -> 403
+		const denied = await appWatch.inject({ method: 'GET', url: `/v1/private/watch/${watchId}` });
+		expect(denied.statusCode).toBe(403);
+		// correct token -> 200 + summary
+		const ok = await appWatch.inject({
+			method: 'GET',
+			url: `/v1/private/watch/${watchId}`,
+			headers: { 'x-watch-token': watchToken }
+		});
+		expect(ok.statusCode).toBe(200);
+		const body = ok.json();
+		expect(body.watchId).toBe(watchId);
+		expect(body.chain).toBe('monero');
+		expect(JSON.stringify(body)).not.toContain('view_key');
+		expect(JSON.stringify(body)).not.toContain(watchToken);
+	});
+
+	test('DELETE cancels the watch', async () => {
+		moneroIdx = 0;
+		const c = await appWatch.inject({
+			method: 'POST',
+			url: '/v1/private/watch',
+			payload: {
+				chain: 'monero',
+				address: '4' + 'C'.repeat(94),
+				viewKey: '7'.repeat(64),
+				webhookUrl: watchPort
+			}
+		});
+		const { watchId, watchToken } = c.json();
+		const del = await appWatch.inject({
+			method: 'DELETE',
+			url: `/v1/private/watch/${watchId}`,
+			headers: { 'x-watch-token': watchToken }
+		});
+		expect(del.statusCode).toBe(200);
+		expect(del.json().cancelled).toBe(true);
+		const status = await appWatch.inject({
+			method: 'GET',
+			url: `/v1/private/watch/${watchId}`,
+			headers: { 'x-watch-token': watchToken }
+		});
+		expect(status.json().cancelled).toBe(true);
+	});
+
+	test('NFPT unhealthy -> POST returns 502 without charging payment', async () => {
+		const { openWatchDb } = await import('../src/private-watch-store.js');
+		const watchDb = openWatchDb(':memory:');
+		const { createNfptClient } = await import('../src/private-watch-nfpt.js');
+		const downClient = createNfptClient({
+			baseUrl: 'http://nfpt',
+			apiKey: 'k',
+			fetchImpl: async () => ({ status: 500, text: async () => '{}' })
+		});
+		const appDown = await buildApp({
+			db, sparkPath, morphoPath, shadowPath,
+			rateLimit: false, logger: false, installX402: false,
+			incomeCfg: { enabled: false, reason: 'disabled-in-tests' },
+			watchDb,
+			watchMasterKey: Buffer.from('22'.repeat(32), 'hex'),
+			nfptClient: downClient,
+			x402Cfg: {
+				enabled: true,
+				recipient: '0x1234567890abcdef1234567890abcdef12345678',
+				network: 'eip155:8453',
+				facilitatorUrl: 'https://x402.org/facilitator',
+				routes: {
+					'POST /v1/private/watch': {
+						accepts: { scheme: 'exact', payTo: '0x1234567890abcdef1234567890abcdef12345678', price: '$0.10', network: 'eip155:8453', maxTimeoutSeconds: 120 },
+						description: 'private watch',
+						mimeType: 'application/json'
+					}
+				}
+			}
+		});
+		const r = await appDown.inject({
+			method: 'POST',
+			url: '/v1/private/watch',
+			payload: {
+				chain: 'monero',
+				address: '4' + 'D'.repeat(94),
+				viewKey: '8'.repeat(64),
+				webhookUrl: watchPort
+			}
+		});
+		expect(r.statusCode).toBe(502);
+		expect(r.json().error.code).toBe('nfpt_upstream_unavailable');
+		await appDown.close();
+	});
+
+	test('POST returns 503 when paywall is unconfigured', async () => {
+		const { openWatchDb } = await import('../src/private-watch-store.js');
+		const watchDb = openWatchDb(':memory:');
+		const { createNfptClient } = await import('../src/private-watch-nfpt.js');
+		const upClient = createNfptClient({
+			baseUrl: 'http://nfpt', apiKey: 'k', fetchImpl: nfptStubFetch
+		});
+		const appNoPaywall = await buildApp({
+			db, sparkPath, morphoPath, shadowPath,
+			rateLimit: false, logger: false, installX402: false,
+			incomeCfg: { enabled: false, reason: 'disabled-in-tests' },
+			watchDb,
+			watchMasterKey: Buffer.from('33'.repeat(32), 'hex'),
+			nfptClient: upClient,
+			x402Cfg: { enabled: false, reason: 'no recipient' }
+		});
+		const r = await appNoPaywall.inject({
+			method: 'POST',
+			url: '/v1/private/watch',
+			payload: {
+				chain: 'monero',
+				address: '4' + 'E'.repeat(94),
+				viewKey: '9'.repeat(64),
+				webhookUrl: watchPort
+			}
+		});
+		expect(r.statusCode).toBe(503);
+		expect(r.json().error.code).toBe('paywall_not_configured');
+		await appNoPaywall.close();
 	});
 });
 

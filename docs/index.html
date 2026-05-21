@@ -250,34 +250,221 @@ same parameters and same response shape (just wrapped as MCP tool content).
 <tr><td><code>seneschal_premium_opportunities</code></td><td><strong>Premium.</strong> Uncapped at-risk catalogue ranked by expected value, with realised 7d market intel. Paid via x402 at the REST surface.</td></tr>
 </table>
 
-<h2>Premium tier (x402)</h2>
+<h2 id="premium-tier-x402">Premium tier (x402) — <strong>LIVE</strong></h2>
 <p>
-A small per-call USDC fee on Base mainnet unlocks
-<code>GET /v1/premium/opportunities</code>: the uncapped at-risk borrower
-catalogue plus realised 7-day market intel (top liquidators, win rate
-per market, our own attempt outcomes), ranked by expected liquidation
-value. Honest value-add over the free 500-row, snapshot-only
-<code>/v1/liquidations/atrisk</code>.
+Pay-per-call endpoints on Base mainnet, settled in USDC via the
+x402 protocol. Three price tiers — bulk feeds, builder analytics,
+and atomic single-fact queries:
+</p>
+<table>
+<thead>
+<tr><th>Endpoint</th><th>Price</th><th>What you get</th></tr>
+</thead>
+<tbody>
+<tr>
+<td><code>GET /v1/premium/opportunities</code></td>
+<td><strong>$0.05</strong></td>
+<td>Uncapped at-risk borrower catalogue plus realised 7-day market
+intel (top liquidators, per-market win rate, our own attempt outcomes),
+ranked by expected liquidation value. Honest value-add over the free
+500-row, snapshot-only <code>/v1/liquidations/atrisk</code>.</td>
+</tr>
+<tr>
+<td><code>GET /v1/premium/builder-stats</code></td>
+<td><strong>$0.10</strong></td>
+<td>Per-builder bid distribution (p25/median/p75/p90/p99/max ETH) plus
+a 24-element hourly slot histogram over a configurable window. Answers
+"what value do I need to land in builder X's bundle right now?" for
+searchers tuning bundle pricing. Sourced from our own shadow recorder
+so it covers every observed slot, not just landed blocks.</td>
+</tr>
+<tr>
+<td><code>GET /v1/q/*</code> (15 endpoints)</td>
+<td><strong>$0.001</strong></td>
+<td><strong>Penny Oracle.</strong> Atomic single-fact endpoints —
+each answers ONE yes/no or one number, returns in &lt;50 ms, and is
+designed for tight agent loops where bulk JSON is overkill. See the
+<a href="#penny-oracle">catalogue below</a>.</td>
+</tr>
+<tr>
+<td><code>POST /v1/private/watch</code></td>
+<td><strong>$0.10</strong></td>
+<td><strong>Private Watch.</strong> One paid call subscribes a Monero
+or Zcash address to view-key based payment monitoring; the receiver
+gets a HMAC-signed webhook on every balance change for 7 days (1&ndash;30
+configurable). View keys are AES-256-GCM encrypted at rest with an
+operator-supplied master key. See
+<a href="#private-watch">private watch below</a>.</td>
+</tr>
+</tbody>
+</table>
+
+<h3 id="penny-oracle">Penny Oracle — /v1/q/* atomic-fact endpoints</h3>
+<p>
+Eight micro-priced endpoints, all <code>GET</code>, all <strong>$0.001</strong>
+per call (1/100th of a cent). Each returns a flat object so an agent
+can branch directly on the answer without nested-field gymnastics.
+The free catalogue at <code>GET /v1/q</code> enumerates every question
+and its input parameters.
+</p>
+<table>
+<thead>
+<tr><th>Endpoint</th><th>Inputs</th><th>Answers</th></tr>
+</thead>
+<tbody>
+<tr><td><code>/v1/q/liquidatable</code></td><td><code>addr</code>, <code>protocol?</code></td><td>Is borrower X liquidatable right now? Returns <code>{found, liquidatable, hf, debt_usd, last_seen_ms}</code> across Aave + Morpho.</td></tr>
+<tr><td><code>/v1/q/at-risk-count</code></td><td><code>max_hf?</code>, <code>min_debt_usd?</code>, <code>protocol?</code></td><td>Count + total debt of borrowers below the named HF and above the named debt floor.</td></tr>
+<tr><td><code>/v1/q/recent-liquidations</code></td><td><code>since_min?</code>, <code>protocol?</code></td><td>Number of liquidations observed in the last N minutes and their aggregate debt.</td></tr>
+<tr><td><code>/v1/q/top-builder</code></td><td><code>window?</code></td><td>Highest-share builder in the named window (<code>24h</code>/<code>7d</code>/<code>30d</code>).</td></tr>
+<tr><td><code>/v1/q/builder-share</code></td><td><code>builder</code>, <code>window?</code></td><td>Slot share of a specific builder (substring match) over the window.</td></tr>
+<tr><td><code>/v1/q/builder-bid</code></td><td><code>builder</code>, <code>pct?</code>, <code>window?</code></td><td>Percentile bid value (in ETH) for that builder over the window. Use <code>pct</code> 25/50/75/90/99.</td></tr>
+<tr><td><code>/v1/q/cheapest-flashloan</code></td><td><code>asset</code>, <code>chain?</code></td><td>Cheapest flash-loan provider for that asset on that chain. Defaults to Ethereum mainnet.</td></tr>
+<tr><td><code>/v1/q/data-freshness</code></td><td><code>source</code></td><td>Age in seconds of the freshest row in one of: <code>shadow_blocks</code>, <code>borrower_snapshot</code>, <code>morpho_borrower_snapshot</code>, <code>missed_liquidations</code>, <code>executions</code>.</td></tr>
+<tr><th colspan="3" style="background:#fff7e6;border-top:2px solid #b35900">Privacy-chain facts &mdash; sourced from Seneschal-operated full nodes</th></tr>
+<tr><td><code>/v1/q/xmr/height</code></td><td>&mdash;</td><td>Current Monero chain height + sync state. Sourced from a synced <code>monerod</code> v0.18 instance.</td></tr>
+<tr><td><code>/v1/q/xmr/mempool</code></td><td>&mdash;</td><td>Number of pending transactions in the Monero mempool right now.</td></tr>
+<tr><td><code>/v1/q/xmr/fee</code></td><td>&mdash;</td><td>Recommended per-byte fee in piconero (also per-kB) so wallets can budget the next-block tx.</td></tr>
+<tr><td><code>/v1/q/xmr/last-block</code></td><td>&mdash;</td><td>Timestamp + age of the most recent Monero block, plus hash, difficulty, size.</td></tr>
+<tr><td><code>/v1/q/zec/height</code></td><td>&mdash;</td><td>Current Zcash chain height + verification progress + best block hash. Sourced from a synced <code>zebra</code> node.</td></tr>
+<tr><td><code>/v1/q/zec/mempool</code></td><td>&mdash;</td><td>Zcash mempool count + bytes.</td></tr>
+<tr><td><code>/v1/q/zec/last-block</code></td><td>&mdash;</td><td>Timestamp + age of the most recent Zcash block, plus hash, difficulty, size.</td></tr>
+</tbody>
+</table>
+<p>
+The privacy-chain set is the "joining the dots" of this product line:
+Monero and Zcash are the two chains where running a node yourself is
+genuinely awkward (~108 GB and ~270 GB respectively, plus syncing
+hours), public RPC endpoints rate-limit aggressively, and there is no
+Etherscan-style hosted explorer to fall back on. We run synced nodes
+already; the x402 sub-cent paywall finally makes selling individual
+reads worth the trouble. All responses are cached server-side for
+10&thinsp;s so an agent in a tight loop costs the daemon nothing extra.
+</p>
+<p>
+Hand-rolled flow:
+</p>
+<pre><code>curl -s 'https://api.seneschal.space/v1/q/liquidatable?addr=0x...&amp;protocol=aave'
+# Pays $0.001 USDC on Base via x402-fetch and returns
+# {"found":true,"protocol":"aave","liquidatable":false,"hf":1.03,"debt_usd":24500,"last_seen_ms":1716314400000}</code></pre>
+<p>
+MCP agents can use the single dispatcher tool <code>seneschal_q</code>
+with <code>{question, params}</code> rather than wiring up eight
+separate tool calls. The MCP path is currently free; the HTTP path
+is paywalled.
 </p>
 <p>
 Payment uses the <a href="https://docs.x402.org">x402 protocol</a>
-(spec v2). Unsigned requests get HTTP 402 with machine-readable
+(spec v2). Unsigned requests get HTTP 402 with a base64-encoded
+<code>Payment-Required</code> header carrying machine-readable
 <code>PaymentRequirements</code>; the client signs an EIP-3009
-<code>transferWithAuthorization</code> and retries with a
-<code>PAYMENT-SIGNATURE</code> header. The <a href="https://x402.org/facilitator">facilitator</a>
-verifies + settles on Base. No API keys, no subscriptions, gasless
-for the payer.
+<code>transferWithAuthorization</code> off-chain and retries with a
+<code>X-PAYMENT</code> header. We delegate verify + settle to the
+<a href="https://facilitator.openx402.ai">openx402.ai</a> facilitator,
+which broadcasts the EIP-3009 transfer on Base. No API keys, no
+subscriptions, no gas for the payer — the facilitator pays the gas
+and stays solvent from a small spread on the underlying USDC.
 </p>
 <p>
 Free metadata endpoint for budgeting before any paid call:
 </p>
-<pre><code>curl https://api.seneschal.space/v1/paywall</code></pre>
+<pre><code>curl https://api.seneschal.space/v1/paywall
+# → {"protocol":"x402","network":"eip155:8453",
+#    "facilitator":"https://facilitator.openx402.ai",
+#    "payTo":"0x46Ba634261566CF242c853d1f49511f9268ba674",
+#    "scheme":"exact (EIP-3009 transferWithAuthorization)",
+#    "routes":[{"endpoint":"GET /v1/premium/opportunities","price":"$0.05",...},
+#              {"endpoint":"GET /v1/premium/builder-stats","price":"$0.10",...},
+#              {"endpoint":"GET /v1/q/liquidatable","price":"$0.001",...}, … ]}</code></pre>
 <p>
-Returns <code>enabled: false</code> when the operator hasn't
-configured a recipient yet (current state) or the full network /
-recipient / route / price table once configured. Agents using
+Agents using <code>x402-axios</code>, <code>x402-fetch</code>,
 <code>@x402/express</code>, <code>@x402/fastify</code> or the
-official client libraries pay automatically on 402.
+official client libraries pay automatically on 402. Hand-rolled flow,
+in three lines of TypeScript:
+</p>
+<pre><code>import { wrapFetchWithPayment } from 'x402-fetch';
+import { createWalletClient, http } from 'viem';
+import { base } from 'viem/chains';
+
+const wallet = createWalletClient({ account, transport: http(), chain: base });
+const fetchPaid = wrapFetchWithPayment(fetch, wallet);
+const r = await fetchPaid('https://api.seneschal.space/v1/premium/opportunities');
+console.log(await r.json());</code></pre>
+<p>
+The <code>account</code> is any viem-compatible signer holding a small
+USDC balance on Base — a fresh EOA + 1 USDC will fund ~20 paid calls.
+</p>
+
+<h3 id="private-watch">Private Watch &mdash; /v1/private/watch (XMR/ZEC payment monitoring)</h3>
+<p>
+This is Phase&nbsp;2 of the privacy-chain product line. The Penny Oracle answers
+chain-tip questions; the Private Watch answers <em>"did <strong>I</strong> just get
+paid?"</em>. The agent hands us a public address, a view key, and a webhook URL.
+We do the heavy lifting (scanning every new block against the view key on a
+local <code>monero-lws</code> or Zcash UFVK scanner) and POST a signed event to the
+webhook the moment the balance changes.
+</p>
+<table>
+<thead>
+<tr><th>Endpoint</th><th>Method</th><th>Auth</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>/v1/private/watch</code></td><td><code>POST</code></td><td>x402 <strong>$0.10</strong></td><td>Create a watch. Body: <code>{chain, address, viewKey, webhookUrl, durationDays?, birthdayHeight?}</code>. Returns <code>{watchId, watchToken, webhookSecret, expiresAt}</code>.</td></tr>
+<tr><td><code>/v1/private/watch/:id</code></td><td><code>GET</code></td><td>header <code>x-watch-token</code></td><td>Read current status: last polled time, delivery count, last known balance snapshot. <strong>Free</strong>.</td></tr>
+<tr><td><code>/v1/private/watch/:id</code></td><td><code>DELETE</code></td><td>header <code>x-watch-token</code></td><td>Cancel a watch. <strong>Free</strong>.</td></tr>
+<tr><td><code>/v1/private/info</code></td><td><code>GET</code></td><td>&mdash;</td><td>Free metadata: current price, supported chains, upstream NFPT health, security notes.</td></tr>
+<tr><td><code>/v1/private/health</code></td><td><code>GET</code></td><td>&mdash;</td><td>Counters only (no PII) for ops monitoring.</td></tr>
+</tbody>
+</table>
+<p>
+<strong>Webhook contract.</strong> Every delivery is a POST with
+<code>content-type: application/json</code> and three Seneschal headers:
+</p>
+<pre><code>X-Seneschal-Watch-Id: &lt;uuid&gt;
+X-Seneschal-Event: balance_change | scan_complete | status_change
+X-Seneschal-Signature: sha256=&lt;HMAC-SHA256(webhookSecret, exact request body)&gt;</code></pre>
+<p>
+The body is plain JSON:
+</p>
+<pre><code>{
+  "watchId": "fb1a29bd-…",
+  "chain": "monero",
+  "address": "46FzbF…",
+  "event": "balance_change",
+  "timestamp": "2026-05-21T08:06:54.626Z",
+  "nonce": "mpf7j7he-30s7yx",
+  "previous": { "balanceAtomic": "0", "scannedHeight": 3349800, … },
+  "current":  { "balanceAtomic": "1234567890", "scannedHeight": 3349881, … },
+  "delta": {
+    "balance_atomic": "1234567890",
+    "before_atomic": "0",
+    "after_atomic":  "1234567890"
+  }
+}</code></pre>
+<p>
+Receivers verify the signature with the per-watch
+<code>webhookSecret</code> returned at creation. Constant-time HMAC comparison
+defeats forgery; the secret is generated server-side and never reused across
+watches. Bodies are capped at 64&nbsp;KB.
+</p>
+<p>
+<strong>Security model.</strong> View keys decrypt incoming transactions but
+<em>cannot spend</em> &mdash; you can hand us one without giving up custody. We
+nonetheless encrypt the key at rest with AES-256-GCM under an operator-held
+master key (<code>PRIVATE_WATCH_ENCRYPTION_KEY</code>); plaintext only exists in
+memory while the poller is decrypting it for the next scan call. Webhook URLs
+pointing at private IPs (RFC1918, loopback, link-local, cloud metadata) are
+rejected at creation time to defeat SSRF.
+</p>
+<p>
+<strong>Tunables.</strong> Polling cadence is 3&thinsp;min by default (stays inside
+NFPT's 5&thinsp;min scanner idle window). On webhook failure we retry on the next
+tick; 50 consecutive failures retire the watch with a <code>dead</code> flag.
+After expiry the row is hard-deleted on the next tick.
+</p>
+<p>
+<strong>MCP.</strong> Agents already inside a paid MCP session can use
+<code>seneschal_private_watch_create</code> (same input shape) and
+<code>seneschal_private_watch_info</code> for budgeting.
 </p>
 
 <h2>Data freshness &amp; coverage</h2>

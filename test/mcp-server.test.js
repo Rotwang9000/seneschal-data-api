@@ -94,7 +94,11 @@ describe('in-process tool surface', () => {
 			'seneschal_list_at_risk_borrowers',
 			'seneschal_list_borrowers',
 			'seneschal_paywall_info',
+			'seneschal_premium_builder_stats',
 			'seneschal_premium_opportunities',
+			'seneschal_private_watch_create',
+			'seneschal_private_watch_info',
+			'seneschal_q',
 			'seneschal_recent_liquidations',
 			'seneschal_stats_overview'
 		]);
@@ -103,6 +107,146 @@ describe('in-process tool surface', () => {
 			expect(typeof t.description).toBe('string');
 			expect(t.description.length).toBeGreaterThan(20);
 		}
+		await client.close();
+		await server.close();
+	});
+
+	test('seneschal_q routes by question name', async () => {
+		const server = buildMcpServer({ db, sparkPath, morphoPath, shadowPath, chainRpcConfigured: { monero: false, zcash: false } });
+		const [clientT, serverT] = InMemoryTransport.createLinkedPair();
+		await server.connect(serverT);
+		const client = new Client({ name: 'test', version: '0' });
+		await client.connect(clientT);
+
+		const r = await client.callTool({
+			name: 'seneschal_q',
+			arguments: { question: 'at-risk-count', params: { max_hf: 1.05 } }
+		});
+		expect(r.isError).toBeFalsy();
+		const data = JSON.parse(r.content[0].text);
+		expect(typeof data.count).toBe('number');
+		expect(typeof data.total_debt_usd).toBe('number');
+		expect(data.max_hf).toBe(1.05);
+
+		const bad = await client.callTool({
+			name: 'seneschal_q',
+			arguments: { question: 'liquidatable', params: { addr: 'nope' } }
+		});
+		const errData = JSON.parse(bad.content[0].text);
+		expect(errData.error?.code).toBe('q_validation');
+
+		await client.close();
+		await server.close();
+	});
+
+	test('seneschal_q dispatches to privacy-chain questions', async () => {
+		const stubFetch = async (_url, opts) => {
+			const body = JSON.parse(opts.body);
+			if (body.method === 'get_info') {
+				return { ok: true, status: 200, json: async () => ({
+					result: { height: 100, target_height: 0, synchronized: true, tx_pool_size: 3 }
+				}) };
+			}
+			throw new Error(`unexpected method ${body.method}`);
+		};
+		const server = buildMcpServer({
+			db, sparkPath, morphoPath, shadowPath,
+			chainRpcUrls: { monero: 'http://stub-mon', zcash: null },
+			chainRpcConfigured: { monero: true, zcash: false },
+			fetchImpl: stubFetch
+		});
+		const [clientT, serverT] = InMemoryTransport.createLinkedPair();
+		await server.connect(serverT);
+		const client = new Client({ name: 'test', version: '0' });
+		await client.connect(clientT);
+
+		const r = await client.callTool({
+			name: 'seneschal_q',
+			arguments: { question: 'xmr/height' }
+		});
+		expect(r.isError).toBeFalsy();
+		const data = JSON.parse(r.content[0].text);
+		expect(data.chain).toBe('monero');
+		expect(data.height).toBe(100);
+
+		const unset = await client.callTool({
+			name: 'seneschal_q',
+			arguments: { question: 'zec/height' }
+		});
+		const unsetData = JSON.parse(unset.content[0].text);
+		expect(unsetData.error?.code).toBe('chain_not_configured');
+
+		await client.close();
+		await server.close();
+	});
+
+	test('seneschal_private_watch_create + _info dispatch via MCP', async () => {
+		const { openWatchDb } = await import('../src/private-watch-store.js');
+		const { createNfptClient } = await import('../src/private-watch-nfpt.js');
+		const watchDb = openWatchDb(':memory:');
+		const watchMasterKey = Buffer.from('aa'.repeat(32), 'hex');
+		const nfptClient = createNfptClient({
+			baseUrl: 'http://nfpt',
+			apiKey: 'k',
+			fetchImpl: async (url) => {
+				if (String(url).endsWith('/lightwallet/status')) {
+					return { status: 200, text: async () => JSON.stringify({ success: true, data: { lightwallet: { connected: true, blockHeight: 3_400_000 } } }) };
+				}
+				return { status: 202, text: async () => JSON.stringify({ data: { jobId: 'J', jobToken: 'T' } }) };
+			}
+		});
+		const server = buildMcpServer({
+			db, sparkPath, morphoPath, shadowPath,
+			watchDb, watchMasterKey, nfptClient,
+			x402Cfg: {
+				enabled: true,
+				recipient: '0x1234567890abcdef1234567890abcdef12345678',
+				network: 'eip155:8453',
+				facilitatorUrl: 'https://x402.org/facilitator',
+				routes: {
+					'POST /v1/private/watch': {
+						accepts: { scheme: 'exact', payTo: '0x1234567890abcdef1234567890abcdef12345678', price: '$0.10', network: 'eip155:8453', maxTimeoutSeconds: 120 },
+						description: 'private watch',
+						mimeType: 'application/json'
+					}
+				}
+			}
+		});
+		const [clientT, serverT] = InMemoryTransport.createLinkedPair();
+		await server.connect(serverT);
+		const client = new Client({ name: 'test', version: '0' });
+		await client.connect(clientT);
+
+		const info = await client.callTool({ name: 'seneschal_private_watch_info', arguments: {} });
+		const infoData = JSON.parse(info.content[0].text);
+		expect(infoData.chains).toEqual(['monero', 'zcash']);
+		expect(infoData.pricing.watch_creation).toBe('$0.10');
+		expect(infoData.upstream.ok).toBe(true);
+
+		const create = await client.callTool({
+			name: 'seneschal_private_watch_create',
+			arguments: {
+				chain: 'monero',
+				address: '4' + 'F'.repeat(94),
+				viewKey: '5'.repeat(64),
+				webhookUrl: 'https://example.com/hook'
+			}
+		});
+		const createData = JSON.parse(create.content[0].text);
+		expect(createData.watchId).toMatch(/^[0-9a-f-]{36}$/u);
+		expect(createData.webhookSecret).toMatch(/^[0-9a-f]{64}$/u);
+		expect(createData.chain).toBe('monero');
+
+		const bad = await client.callTool({
+			name: 'seneschal_private_watch_create',
+			arguments: {
+				chain: 'monero', address: '4short', viewKey: '5'.repeat(64),
+				webhookUrl: 'https://example.com/hook'
+			}
+		});
+		const badData = JSON.parse(bad.content[0].text);
+		expect(badData.error?.code).toBe('invalid_request');
+
 		await client.close();
 		await server.close();
 	});

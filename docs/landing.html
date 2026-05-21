@@ -61,20 +61,55 @@ smoke-tested via Pimlico, MIT-licensed.
 <a href="https://github.com/Rotwang9000/seneschal-paymaster">GitHub</a>
 </div>
 
-<h2>For agents: premium feed via x402</h2>
+<h2>For agents: premium feed via x402 &mdash; <strong>LIVE</strong></h2>
 <p>
-A small per-call USDC fee on Base unlocks
-<code>/v1/premium/opportunities</code>: the uncapped at-risk catalogue
-joined with realised 7-day market intel (top liquidators, win rate,
-our own attempt outcomes per market), pre-ranked by expected value.
-Standard x402 paywall &mdash; signed
-<code>transferWithAuthorization</code>, settlement by an x402
-facilitator, no API keys.
+Pay-per-call endpoints on Base mainnet, settled in USDC via the x402
+protocol &mdash; no API keys, no subscriptions, no gas for the payer
+(the <a href="https://facilitator.openx402.ai">openx402.ai</a>
+facilitator pays the EIP-3009 transfer gas). Three price tiers:
 </p>
+<ul>
+<li><code>GET /v1/premium/opportunities</code> &mdash; <strong>$0.05</strong>
+&mdash; uncapped at-risk catalogue joined with realised 7-day market
+intel (top liquidators, win rate, our own attempt outcomes per
+market), pre-ranked by expected value.</li>
+<li><code>GET /v1/premium/builder-stats</code> &mdash; <strong>$0.10</strong>
+&mdash; per-builder bid distribution (p25/median/p90/p99/max ETH) and
+hourly slot histogram from our shadow recorder. For searchers tuning
+bundle pricing.</li>
+<li><code>GET /v1/q/*</code> &mdash; <strong>$0.001</strong>
+&mdash; <strong>Penny Oracle.</strong> Fifteen atomic single-fact
+endpoints across two families:
+<ul>
+<li><strong>DeFi facts</strong> (eight) &mdash; liquidatable? at-risk
+count? top builder? builder p90 bid? cheapest flash-loan provider?
+data freshness?</li>
+<li><strong>Privacy-chain facts</strong> (seven) &mdash; Monero and
+Zcash chain-tip atomic facts sourced from Seneschal-operated full
+nodes. The chains where running your own node is annoying and
+where free RPC endpoints rate-limit. <code>/v1/q/xmr/*</code> and
+<code>/v1/q/zec/*</code>.</li>
+</ul>
+Free catalogue with live chain availability at <code>/v1/q</code>.</li>
+<li><code>POST /v1/private/watch</code> &mdash; <strong>$0.10</strong>
+&mdash; <strong>Private Watch.</strong> One paid call subscribes a
+Monero or Zcash address to view-key-based payment monitoring. We
+poll our local <code>monero-lws</code> / Orchard scanner against the
+view key every 3 minutes and POST an HMAC-signed webhook on every
+balance change for 7 days (1&ndash;30 configurable). View keys are
+AES-256-GCM encrypted at rest. Status + cancel are free; webhook
+verification uses HMAC-SHA256 with a per-watch secret. This is the
+infrastructure for accepting XMR/ZEC payments without exposing a
+spend key.</li>
+</ul>
 <div class="row">
-<a href="https://api.seneschal.space/v1/paywall">Paywall metadata</a>
+<a href="https://api.seneschal.space/v1/paywall" style="background:#e7f1ff;border-color:#1462b3;color:#1462b3"><strong>Paywall metadata &raquo;</strong></a>
+<a href="https://docs.seneschal.space/#premium-tier-x402">How to pay (TS / curl)</a>
 <a href="https://docs.x402.org">x402 spec</a>
-<a href="https://api.seneschal.space/v1/premium/opportunities">Premium endpoint</a>
+<a href="https://api.seneschal.space/v1/premium/opportunities">/v1/premium/opportunities</a>
+<a href="https://api.seneschal.space/v1/premium/builder-stats">/v1/premium/builder-stats</a>
+<a href="https://api.seneschal.space/v1/q">/v1/q (catalogue)</a>
+<a href="https://api.seneschal.space/v1/private/info">/v1/private/info</a>
 </div>
 
 <p class=muted>
