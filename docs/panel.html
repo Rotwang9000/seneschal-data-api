@@ -1,0 +1,921 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Seneschal Control Panel — Private Watch via WalletConnect</title>
+<meta name="description" content="Browser-based control panel for Seneschal Private Watch. Sign in with any EVM wallet via WalletConnect, create XMR/ZEC payment watches, top up credit, run historical scans, all settled in USDC on Base via x402. Every action shows the equivalent REST API call so you can move to your own automation when you're ready.">
+<style>
+:root {
+	--bg: #fdfdfc;
+	--ink: #161616;
+	--muted: #6b6b6b;
+	--brand: #1462b3;
+	--brand-deep: #0d3a6d;
+	--accent: #9d6cff;
+	--good: #1a7a3a;
+	--warn: #b35900;
+	--danger: #b3261e;
+	--card: #fff;
+	--card-border: #d9e0ec;
+	--soft: #f4f6fb;
+	--soft-2: #eef2f8;
+}
+* { box-sizing: border-box }
+html, body { background: var(--bg); color: var(--ink); margin: 0 }
+body { font: 16px/1.55 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; padding: 0 }
+main { max-width: 62em; margin: 0 auto; padding: 1.5em 1.1em 4em }
+h1 { font-weight: 600; margin: 0 0 .1em; font-size: 1.55em }
+h2 { font-weight: 600; font-size: 1.1em; margin: 1.8em 0 0.5em }
+h3 { font-weight: 600; font-size: 0.95em; margin: 0.8em 0 0.2em; text-transform: uppercase; letter-spacing: 0.04em; color: #555 }
+code, pre { font-family: ui-monospace, "JetBrains Mono", Menlo, Consolas, monospace; font-size: 0.9em }
+code { background: var(--soft); padding: 1px 5px; border-radius: 3px; word-break: break-word }
+pre { background: var(--soft); padding: 0.8em 1em; border-radius: 4px; overflow-x: auto; line-height: 1.45; margin: 0.5em 0 }
+pre code { background: transparent; padding: 0 }
+a { color: var(--brand) }
+.muted { color: var(--muted); font-size: 0.92em }
+.spaced { margin: 0.6em 0 }
+
+/* Top bar -------------------------------------------------------- */
+header.bar { background: linear-gradient(135deg, var(--brand) 0%, var(--brand-deep) 100%); color: #fff; padding: 1em 1.1em; display: flex; align-items: center; gap: 1em; flex-wrap: wrap }
+header.bar h1 { color: #fff; flex: 1 1 auto; font-size: 1.15em; font-weight: 600 }
+header.bar .sub { color: #cfe3ff; font-size: 0.85em; margin-top: 0.15em; display: block }
+header.bar a { color: #cfe3ff; font-size: 0.85em; margin-right: 0.6em; text-decoration: none; border-bottom: 1px dotted rgba(255,255,255,.4) }
+
+/* Wallet pill ---------------------------------------------------- */
+.wallet { display: flex; align-items: center; gap: 0.5em }
+.wallet button { background: #fff; color: var(--brand); border: 0; padding: 0.5em 1em; border-radius: 4px; font-weight: 600; cursor: pointer; font-size: 0.92em }
+.wallet button:hover { background: #f0f0f0 }
+.wallet button.secondary { background: transparent; color: #fff; border: 1px solid rgba(255,255,255,.4) }
+.wallet button.secondary:hover { background: rgba(255,255,255,.1) }
+.wallet button:disabled { background: #b29be0; color: #fff; cursor: progress }
+.wallet .pill { background: rgba(255,255,255,.18); color: #fff; padding: 0.35em 0.75em; border-radius: 999px; font-family: ui-monospace, monospace; font-size: 0.85em; display: inline-flex; align-items: center; gap: 0.4em }
+.wallet .pill .dot { width: 8px; height: 8px; border-radius: 50%; background: #6dd97a; box-shadow: 0 0 6px #6dd97a }
+.wallet .balance { color: #cfe3ff; font-size: 0.85em; font-family: ui-monospace, monospace }
+
+/* Tabs ----------------------------------------------------------- */
+nav.tabs { display: flex; flex-wrap: wrap; gap: 0; border-bottom: 1px solid var(--card-border); margin: 1.3em 0 0 }
+nav.tabs button { background: transparent; border: 0; border-bottom: 3px solid transparent; padding: 0.7em 1em; font: inherit; font-size: 0.95em; color: var(--muted); cursor: pointer; font-weight: 500 }
+nav.tabs button.active { color: var(--brand); border-bottom-color: var(--brand); font-weight: 600 }
+nav.tabs button.free.active { color: var(--accent); border-bottom-color: var(--accent) }
+nav.tabs button:hover:not(.active) { color: var(--ink) }
+nav.tabs button .price { color: var(--muted); font-weight: 400; margin-left: 0.4em; font-size: 0.85em }
+nav.tabs button.active .price { color: inherit }
+
+section.panel { display: none; padding: 1em 0 0 }
+section.panel.active { display: block }
+
+/* Forms ---------------------------------------------------------- */
+label.field { display: block; margin: 0.8em 0 0.2em; font-size: 0.85em; font-weight: 600; color: #444 }
+label.field .hint { font-weight: 400; color: var(--muted); margin-left: 0.4em; font-size: 0.92em }
+input[type=text], input[type=url], input[type=number], select, textarea {
+	width: 100%; font: inherit; padding: 0.55em 0.7em; border: 1px solid #bcc4d4; border-radius: 4px; background: #fff;
+}
+textarea { font-family: ui-monospace, "JetBrains Mono", Menlo, Consolas, monospace; font-size: 0.9em; min-height: 4em; resize: vertical }
+input:focus, select:focus, textarea:focus { outline: 2px solid var(--brand); outline-offset: -1px; border-color: var(--brand) }
+
+button.action { background: var(--brand); color: #fff; border: 0; padding: 0.6em 1.2em; border-radius: 4px; font-weight: 600; font-size: 0.95em; cursor: pointer; margin-top: 0.9em }
+button.action:hover:not(:disabled) { background: #0d4f8e }
+button.action.free { background: var(--accent) }
+button.action.free:hover:not(:disabled) { background: #8a52f0 }
+button.action.danger { background: var(--danger) }
+button.action.danger:hover:not(:disabled) { background: #8a1c17 }
+button.action:disabled { background: #b29be0; cursor: progress }
+button.action.ghost { background: transparent; color: var(--brand); border: 1px solid var(--brand); padding: 0.5em 1em }
+button.action.ghost:hover { background: #eaf3fc }
+
+/* Result + equivalent-API box ------------------------------------ */
+.result { background: #fff; border: 1px solid var(--card-border); border-radius: 4px; padding: 0.8em 1em; margin-top: 0.9em; word-break: break-all }
+.result.success { border-left: 4px solid var(--good); background: #eafaef }
+.result.error   { border-left: 4px solid var(--danger); background: #fdecea; color: #7a1614 }
+.result.info    { border-left: 4px solid var(--brand); background: #eaf3fc }
+.result label  { display: block; font-size: 0.78em; font-weight: 600; color: #555; margin: 0.2em 0; text-transform: uppercase; letter-spacing: 0.04em }
+.result .kv { font-family: ui-monospace, monospace; font-size: 0.85em }
+
+.api-box { background: #1e2a3a; color: #d6e3f5; border-radius: 6px; padding: 0.9em 1.1em; margin: 0.9em 0 0; overflow-x: auto }
+.api-box h4 { color: #9bbef0; font-size: 0.78em; text-transform: uppercase; letter-spacing: 0.05em; margin: 0 0 0.5em; font-weight: 600 }
+.api-box pre { background: transparent; padding: 0; color: #d6e3f5; margin: 0 }
+.api-box code { background: transparent; color: #d6e3f5 }
+.api-box .label { color: #8aa6c5; font-size: 0.75em; text-transform: uppercase; margin-top: 0.6em; display: block; letter-spacing: 0.05em }
+.api-box .copy { float: right; background: rgba(255,255,255,.12); color: #d6e3f5; border: 0; padding: 0.2em 0.55em; border-radius: 3px; cursor: pointer; font: inherit; font-size: 0.8em }
+.api-box .copy:hover { background: rgba(255,255,255,.22) }
+
+/* Notices -------------------------------------------------------- */
+.notice { border-radius: 4px; padding: 0.6em 0.9em; margin: 0.6em 0; font-size: 0.92em }
+.notice.warn { background: #fff8e6; border: 1px solid #e8d6a3; border-left: 4px solid var(--warn); color: #5a3d00 }
+.notice.info { background: #eaf3fc; border: 1px solid #bcd4ed; border-left: 4px solid var(--brand); color: #0d3a6d }
+.notice.success { background: #eafaef; border: 1px solid #b4d8be; border-left: 4px solid var(--good); color: #0d4d22 }
+
+/* Watch list ----------------------------------------------------- */
+table.watches { width: 100%; border-collapse: collapse; font-size: 0.9em; margin: 0.7em 0 }
+table.watches th, table.watches td { border: 1px solid var(--card-border); padding: 0.55em 0.7em; vertical-align: top; text-align: left }
+table.watches th { background: var(--soft); font-weight: 600 }
+table.watches td.actions { white-space: nowrap }
+table.watches button { font-size: 0.82em; padding: 0.3em 0.6em; margin: 0 0.15em 0.15em 0; border-radius: 3px; border: 1px solid var(--card-border); background: #fff; cursor: pointer }
+table.watches button:hover { background: var(--soft) }
+table.watches button.danger { color: var(--danger); border-color: #f5b5af }
+table.watches button.danger:hover { background: #fdecea }
+
+.empty { color: var(--muted); padding: 1em; text-align: center; border: 1px dashed var(--card-border); border-radius: 4px }
+
+footer { color: var(--muted); font-size: 0.9em; margin-top: 3em; padding-top: 1em; border-top: 1px solid var(--card-border) }
+</style>
+</head>
+<body>
+
+<header class="bar">
+	<div style="flex:1 1 auto">
+		<h1>Seneschal Control Panel <span style="font-weight:400;color:#cfe3ff;font-size:0.85em;margin-left:0.5em">— Private Watch via WalletConnect</span></h1>
+		<span class="sub"><a href="https://seneschal.space/">Landing</a> · <a href="https://docs.seneschal.space/">Docs</a> · <a href="https://stats.seneschal.space/">Live stats</a> · <a href="https://api.seneschal.space/v1/private/info">/v1/private/info</a></span>
+	</div>
+	<div class="wallet" id="wallet-area">
+		<button id="connect-btn" type="button">Connect Wallet</button>
+	</div>
+</header>
+
+<main>
+
+<div class="notice info" style="margin-top:1em">
+	<strong>What this is.</strong> A convenience UI on top of the same public REST API at <code>api.seneschal.space</code>. Connect any EVM wallet via WalletConnect (or MetaMask). Pay for watches, top-ups and historical scans in USDC on Base via the x402 protocol — no account, no API key, no sign-up. Every action below shows the <em>equivalent API call</em> so you can graduate to your own automation any time. View keys never leave your browser except to be sent over TLS to the API for the specific action.
+</div>
+
+<nav class="tabs" role="tablist">
+	<button type="button" class="tab active" data-tab="watch">New watch <span class="price">$0.10</span></button>
+	<button type="button" class="tab" data-tab="watches">My watches <span class="price" id="watches-count">(0)</span></button>
+	<button type="button" class="tab" data-tab="historical">Historical lookup <span class="price">$0.50</span></button>
+	<button type="button" class="tab free" data-tab="derive">Derive viewkey <span class="price">FREE</span></button>
+</nav>
+
+<!-- ── New watch ───────────────────────────────────────────────── -->
+<section class="panel active" id="panel-watch">
+	<h2>Create a new payment-monitoring watch</h2>
+	<p class="muted">You'll be asked to sign an <code>EIP-3009 transferWithAuthorization</code> for $0.10 USDC on Base. Once payment is verified by the openx402 facilitator the watch is created with $0.10 of starter credit (~5 idle days at the $0.02/day rate). Top up any time.</p>
+
+	<label class="field" for="w-chain">Chain</label>
+	<select id="w-chain">
+		<option value="monero">Monero (XMR) — primary + secret view-key required</option>
+		<option value="zcash">Zcash (ZEC) — Orchard UFVK required</option>
+	</select>
+
+	<label class="field" for="w-address">Address <span class="hint">primary or a subaddress you control</span></label>
+	<input type="text" id="w-address" placeholder="44AFFq… (XMR) or u1… (ZEC)" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">
+
+	<label class="field" for="w-viewkey">View key <span class="hint">read-only — cannot spend</span></label>
+	<input type="text" id="w-viewkey" placeholder="64-hex secret view key (XMR) or uview1… UFVK (ZEC)" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">
+
+	<label class="field" for="w-webhook">Webhook URL <span class="hint">HTTPS only in production; we POST signed events here</span></label>
+	<input type="url" id="w-webhook" placeholder="https://your.server/seneschal-hook" autocomplete="off">
+
+	<label class="field" for="w-birthday">Birthday height <span class="hint">optional; speeds up first scan if your wallet is recent</span></label>
+	<input type="number" id="w-birthday" placeholder="(leave blank for full scan)" min="0">
+
+	<button type="button" class="action" id="watch-submit">Pay $0.10 and create watch</button>
+	<div id="watch-result"></div>
+	<div class="api-box" id="watch-api">
+		<button class="copy" type="button" data-copy="watch-api-curl">Copy curl</button>
+		<h4>Equivalent API call</h4>
+		<span class="label">curl + your own x402 signer</span>
+<pre><code id="watch-api-curl">curl -s https://api.seneschal.space/v1/private/watch \
+	-X POST -H "content-type: application/json" \
+	-H "x-payment: &lt;base64 EIP-3009 payload, $0.10 USDC on Base&gt;" \
+	-d '{
+		"chain": "monero",
+		"address": "44AFFq…",
+		"viewKey": "0123…",
+		"webhookUrl": "https://your.server/seneschal-hook"
+	}'</code></pre>
+		<span class="label">Node.js (x402-fetch wraps the payment flow)</span>
+<pre><code>import { wrapFetchWithPayment } from "x402-fetch";
+import { createWalletClient, http } from "viem";
+import { base } from "viem/chains";
+
+const fetchPaid = wrapFetchWithPayment(fetch, walletClient);
+const r = await fetchPaid("https://api.seneschal.space/v1/private/watch", {
+	method: "POST",
+	headers: { "content-type": "application/json" },
+	body: JSON.stringify({ chain, address, viewKey, webhookUrl })
+});
+const { watchId, watchToken, webhookSecret } = await r.json();</code></pre>
+		<span class="label">MCP (for AI agents already in a paid session)</span>
+<pre><code>tool: seneschal_private_watch_create
+input: { chain, address, viewKey, webhookUrl }</code></pre>
+	</div>
+</section>
+
+<!-- ── My watches ─────────────────────────────────────────────── -->
+<section class="panel" id="panel-watches">
+	<h2>My watches <span class="muted" style="font-weight:400;font-size:0.85em">stored in this browser&rsquo;s localStorage</span></h2>
+	<p class="muted">Watches you create on this device are remembered locally so you can top up, check status and cancel them. <strong>Nothing is sent to our server about your saved list</strong> — the API only knows the <code>watchToken</code> we hand back at creation, and we cannot reconstruct that for you if you lose this browser. Export / import a JSON backup any time.</p>
+	<div style="margin-bottom:0.6em">
+		<button class="action ghost" type="button" id="watches-refresh">Refresh statuses</button>
+		<button class="action ghost" type="button" id="watches-export">Export JSON</button>
+		<button class="action ghost" type="button" id="watches-import-btn">Import JSON</button>
+		<input type="file" id="watches-import" accept="application/json" style="display:none">
+	</div>
+	<div id="watches-list"></div>
+	<div id="watches-result"></div>
+	<div class="api-box">
+		<h4>Equivalent API calls — managing a watch</h4>
+		<span class="label">Status (free)</span>
+<pre><code>curl -s -H "x-watch-token: &lt;token&gt;" \
+	https://api.seneschal.space/v1/private/watch/&lt;watchId&gt;</code></pre>
+		<span class="label">Top up — $0.10 / $1 / $5 tier</span>
+<pre><code>curl -s -X POST https://api.seneschal.space/v1/private/topup-1 \
+	-H "x-payment: &lt;base64 EIP-3009, $1.00 USDC on Base&gt;" \
+	-H "content-type: application/json" \
+	-d '{"watchId":"…","watchToken":"…"}'</code></pre>
+		<span class="label">Cancel (free, no refund)</span>
+<pre><code>curl -s -X DELETE -H "x-watch-token: &lt;token&gt;" \
+	https://api.seneschal.space/v1/private/watch/&lt;watchId&gt;</code></pre>
+	</div>
+</section>
+
+<!-- ── Historical lookup ──────────────────────────────────────── -->
+<section class="panel" id="panel-historical">
+	<h2>One-off historical lookup</h2>
+	<p class="muted">Single $0.50 USDC payment runs a full historical scan against the view key you supply and returns aggregated totals (<code>received / spent / spendable</code> in atomic units) and optionally per-note breakdowns. <strong>Your view key transits our process in memory only</strong> — it is never written to our SQLite or logs.</p>
+
+	<label class="field" for="h-chain">Chain</label>
+	<select id="h-chain">
+		<option value="monero">Monero (XMR)</option>
+		<option value="zcash">Zcash (ZEC)</option>
+	</select>
+
+	<label class="field" for="h-address">Address</label>
+	<input type="text" id="h-address" placeholder="44AFFq… (XMR) or u1… (ZEC)" autocomplete="off">
+
+	<label class="field" for="h-viewkey">View key</label>
+	<input type="text" id="h-viewkey" placeholder="secret view key (XMR) or uview1… UFVK (ZEC)" autocomplete="off">
+
+	<label class="field" for="h-birthday">Birthday height <span class="hint">optional; Zcash auto-detects if blank</span></label>
+	<input type="number" id="h-birthday" min="0">
+
+	<label class="field"><input type="checkbox" id="h-notes" style="width:auto;margin-right:0.4em;vertical-align:middle"> Include per-note breakdown</label>
+
+	<button type="button" class="action" id="historical-submit">Pay $0.50 and run scan</button>
+	<div id="historical-result"></div>
+	<div class="api-box">
+		<button class="copy" type="button" data-copy="historical-api-curl">Copy curl</button>
+		<h4>Equivalent API call</h4>
+<pre><code id="historical-api-curl">curl -s -X POST https://api.seneschal.space/v1/private/historical \
+	-H "x-payment: &lt;base64 EIP-3009 payload, $0.50 USDC on Base&gt;" \
+	-H "content-type: application/json" \
+	-d '{
+		"chain": "monero",
+		"address": "44AFFq…",
+		"viewKey": "0123…",
+		"includeNotes": true
+	}'</code></pre>
+	</div>
+</section>
+
+<!-- ── Derive viewkey (free) ──────────────────────────────────── -->
+<section class="panel" id="panel-derive">
+	<h2 style="color:var(--accent)">Derive a Zcash viewing key from a BIP-39 phrase</h2>
+	<p class="muted">Free, no payment. Rate-limited 6/min/IP. Forwards your phrase to the local <code>orchard-scanner derive-ufvk</code> command and returns the matching read-only Unified Full Viewing Key.</p>
+
+	<div class="notice warn"><strong>Security warning.</strong> Your seed phrase transits over TLS to <code>api.seneschal.space</code>. We do <strong>not</strong> log or persist it, but a network attacker between you and us would see the bytes. For maximum safety, derive offline using <a href="https://github.com/Rotwang9000/orchard-scanner">orchard-scanner</a>. Leave the textarea blank to use the canonical BIP-39 test vector (no risk).</div>
+
+	<label class="field" for="d-chain">Chain</label>
+	<select id="d-chain"><option value="zcash">Zcash (Orchard)</option></select>
+
+	<label class="field" for="d-network">Network</label>
+	<select id="d-network">
+		<option value="mainnet">mainnet</option>
+		<option value="testnet">testnet</option>
+	</select>
+
+	<label class="field" for="d-phrase">BIP-39 phrase <span class="hint">12 or 24 words; blank = test vector</span></label>
+	<textarea id="d-phrase" placeholder="abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon art" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"></textarea>
+
+	<button type="button" class="action free" id="derive-submit">Derive UFVK</button>
+	<div id="derive-result"></div>
+	<div class="api-box">
+		<button class="copy" type="button" data-copy="derive-api-curl">Copy curl</button>
+		<h4>Equivalent API call</h4>
+<pre><code id="derive-api-curl">curl -s -X POST https://api.seneschal.space/v1/private/derive-viewkey \
+	-H "content-type: application/json" \
+	-d '{"chain":"zcash","network":"mainnet","phrase":"abandon abandon … art"}'</code></pre>
+	</div>
+</section>
+
+<footer>
+	<p>Open-source on GitHub: <a href="https://github.com/Rotwang9000/seneschal-data-api">Rotwang9000/seneschal-data-api</a>. Contact <a href="https://t.me/OrknetP"><code>@OrknetP</code> on Telegram</a>. This panel is a thin convenience over the public REST API at <code>api.seneschal.space</code> — read <a href="https://docs.seneschal.space/#private-watch-detail">the docs</a> if you'd rather call it directly.</p>
+</footer>
+
+</main>
+
+<script type="module">
+//
+// Seneschal Control Panel — single-file, no-build module.
+//
+// What this does:
+//   1. Connects an EVM wallet via WalletConnect v2 (project id below)
+//      OR an in-page injected provider (MetaMask / Rabby / Coinbase).
+//   2. Reads USDC balance on Base mainnet so users can size top-ups.
+//   3. For paywalled endpoints (/v1/private/{watch,topup,topup-1,
+//      topup-5,historical}) it pulls the x402 challenge from the
+//      `payment-required` response header, asks the wallet to sign
+//      an EIP-3009 transferWithAuthorization, and resubmits with the
+//      base64-encoded `x-payment` header. The openx402 facilitator
+//      handles settlement; we never see a private key.
+//   4. Persists created watches in localStorage so the user can top
+//      up / poll / cancel them later — server has no concept of
+//      "your watches", only per-token row lookups.
+//   5. Every action emits the equivalent curl / Node / MCP call so
+//      curious users can move to their own automation.
+//
+// View keys NEVER touch localStorage. They go from the form straight
+// to the request body and (for historical) the API streams them to
+// NFPT in-memory only.
+//
+
+import { EthereumProvider } from "https://esm.sh/@walletconnect/ethereum-provider@2.21.4";
+import {
+	createPublicClient, createWalletClient, custom, http,
+	formatUnits, hexToBytes, bytesToHex, parseAbi
+} from "https://esm.sh/viem@2.21.0";
+import { base } from "https://esm.sh/viem@2.21.0/chains";
+
+// ── Constants ─────────────────────────────────────────────────────
+const API_BASE      = "https://api.seneschal.space";
+const WC_PROJECT_ID = "b7151eb7ba4e30e69839e709db44909f";
+const USDC_ADDRESS  = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"; // Base mainnet
+const BASE_CHAIN_ID = 8453;
+const STORAGE_KEY   = "seneschal-panel-watches-v1";
+const ERC20_ABI     = parseAbi(["function balanceOf(address) view returns (uint256)"]);
+
+// ── State ────────────────────────────────────────────────────────
+const state = {
+	wcProvider: null,        // The WalletConnect EthereumProvider instance.
+	walletClient: null,      // viem WalletClient over the provider.
+	publicClient: createPublicClient({ chain: base, transport: http() }),
+	account: null,           // 0x...
+	usdc: 0n,                // atomic
+	connecting: false
+};
+
+// ── DOM helpers ──────────────────────────────────────────────────
+const $ = (id) => document.getElementById(id);
+function esc(s) {
+	return String(s ?? "")
+		.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+		.replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+}
+function shortAddr(a) { return a ? a.slice(0, 6) + "…" + a.slice(-4) : ""; }
+
+function setResult(elId, kind, html) {
+	const el = $(elId); if (!el) return;
+	el.className = "result " + kind;
+	el.innerHTML = html;
+}
+
+function clearResult(elId) {
+	const el = $(elId); if (!el) return;
+	el.className = ""; el.innerHTML = "";
+}
+
+// ── Tab switcher ────────────────────────────────────────────────
+document.querySelectorAll("nav.tabs .tab").forEach((b) => {
+	b.addEventListener("click", () => {
+		document.querySelectorAll("nav.tabs .tab").forEach((x) => x.classList.remove("active"));
+		document.querySelectorAll("section.panel").forEach((x) => x.classList.remove("active"));
+		b.classList.add("active");
+		$("panel-" + b.dataset.tab).classList.add("active");
+		if (b.dataset.tab === "watches") renderWatches();
+	});
+});
+
+// ── Copy buttons ────────────────────────────────────────────────
+document.querySelectorAll(".api-box .copy").forEach((b) => {
+	b.addEventListener("click", async () => {
+		const src = $(b.dataset.copy); if (!src) return;
+		try { await navigator.clipboard.writeText(src.textContent); b.textContent = "Copied"; setTimeout(() => { b.textContent = "Copy curl"; }, 1200); }
+		catch (_) { b.textContent = "Press Ctrl-C"; }
+	});
+});
+
+// ── Wallet connect / disconnect ─────────────────────────────────
+async function getProvider() {
+	if (state.wcProvider) return state.wcProvider;
+	state.wcProvider = await EthereumProvider.init({
+		projectId: WC_PROJECT_ID,
+		chains: [BASE_CHAIN_ID],
+		showQrModal: true,
+		methods: ["eth_requestAccounts", "eth_accounts", "eth_chainId", "eth_signTypedData_v4", "personal_sign", "wallet_switchEthereumChain"],
+		events: ["accountsChanged", "chainChanged", "disconnect"],
+		metadata: {
+			name: "Seneschal Control Panel",
+			description: "Browser-based control panel for Seneschal Private Watch (XMR/ZEC payment monitoring via x402 USDC on Base).",
+			url: "https://panel.seneschal.space",
+			icons: ["https://seneschal.space/favicon.ico"]
+		}
+	});
+	state.wcProvider.on("accountsChanged", (accs) => { state.account = accs?.[0] ?? null; refreshWallet(); });
+	state.wcProvider.on("disconnect", () => disconnectWallet());
+	return state.wcProvider;
+}
+
+async function connectWallet() {
+	if (state.connecting) return;
+	state.connecting = true;
+	$("connect-btn").disabled = true;
+	$("connect-btn").textContent = "Connecting…";
+	try {
+		const provider = await getProvider();
+		await provider.connect();
+		state.account = provider.accounts?.[0] ?? null;
+		state.walletClient = createWalletClient({ account: state.account, chain: base, transport: custom(provider) });
+		await refreshWallet();
+	}
+	catch (err) {
+		console.error("connect failed", err);
+		alert("Wallet connect failed: " + (err?.message ?? err));
+	}
+	finally {
+		state.connecting = false;
+		$("connect-btn").disabled = false;
+		renderWalletArea();
+	}
+}
+
+async function disconnectWallet() {
+	try { await state.wcProvider?.disconnect(); }
+	catch (_) { /* no-op */ }
+	state.wcProvider = null;
+	state.walletClient = null;
+	state.account = null;
+	state.usdc = 0n;
+	renderWalletArea();
+}
+
+async function refreshWallet() {
+	if (!state.account) return;
+	try {
+		state.usdc = await state.publicClient.readContract({
+			address: USDC_ADDRESS,
+			abi: ERC20_ABI,
+			functionName: "balanceOf",
+			args: [state.account]
+		});
+	}
+	catch (err) { console.error("usdc balance", err); state.usdc = 0n; }
+	renderWalletArea();
+}
+
+function renderWalletArea() {
+	const el = $("wallet-area");
+	if (!state.account) {
+		el.innerHTML = '<button id="connect-btn" type="button">Connect Wallet</button>';
+		$("connect-btn").addEventListener("click", connectWallet);
+		return;
+	}
+	const balance = formatUnits(state.usdc, 6);
+	el.innerHTML = `
+		<span class="pill"><span class="dot"></span>${esc(shortAddr(state.account))}</span>
+		<span class="balance">${esc(balance)} USDC</span>
+		<button class="secondary" id="disconnect-btn" type="button">Disconnect</button>
+	`;
+	$("disconnect-btn").addEventListener("click", disconnectWallet);
+}
+renderWalletArea();
+
+// ── x402 EIP-3009 payment flow ─────────────────────────────────
+// Public entry point: `payX402(method, path, body)` returns the
+// final JSON response or throws. It transparently handles the 402
+// challenge / sign / retry dance.
+//
+// Strict mode considerations:
+//   - We DO NOT preflight the challenge separately; we send the
+//     real request once, expect 402, sign, then send again with
+//     the x-payment header. Cleaner UX, one wallet popup, one
+//     successful response.
+//   - The wallet only sees a typed EIP-712 message describing the
+//     transfer (from/to/value/validAfter/validBefore/nonce). The
+//     facilitator submits the actual on-chain tx; users never sign
+//     a transaction.
+//
+async function payX402(method, path, body) {
+	if (!state.walletClient) throw new Error("Connect a wallet first.");
+	const url = API_BASE + path;
+	const init1 = {
+		method,
+		headers: { "content-type": "application/json" },
+		body: body == null ? undefined : JSON.stringify(body)
+	};
+	const probe = await fetch(url, init1);
+	if (probe.status !== 402) {
+		// Either already paid (unlikely from a browser), or the
+		// route doesn't require payment (e.g. test/cancellation
+		// reuses /private/* but those don't paywall). Return JSON
+		// directly. Cancel handler etc. uses fetch directly though.
+		const txt = await probe.text();
+		try { return { status: probe.status, body: JSON.parse(txt), headers: probe.headers }; }
+		catch (_) { return { status: probe.status, body: txt, headers: probe.headers }; }
+	}
+	const challengeB64 = probe.headers.get("payment-required");
+	if (!challengeB64) throw new Error("402 without payment-required header — server misconfigured");
+	const challenge = JSON.parse(atob(challengeB64));
+	if (!challenge?.accepts?.length) throw new Error("No acceptable payment methods in challenge");
+	const accept = challenge.accepts[0];
+	if (accept.scheme !== "exact" || accept.network !== "eip155:8453") {
+		throw new Error("Unsupported payment scheme/network: " + accept.scheme + " " + accept.network);
+	}
+	const xPayment = await signX402Payment(accept);
+	const init2 = {
+		method,
+		headers: { "content-type": "application/json", "x-payment": xPayment },
+		body: body == null ? undefined : JSON.stringify(body)
+	};
+	const final = await fetch(url, init2);
+	const txt = await final.text();
+	let parsed = null;
+	try { parsed = JSON.parse(txt); } catch (_) { parsed = txt; }
+	return { status: final.status, body: parsed, headers: final.headers };
+}
+
+// Build the base64-encoded x402 payload for the `exact` scheme on
+// Base. The wallet signs a typed-data message (no on-chain tx); the
+// facilitator submits the transferWithAuthorization for us.
+async function signX402Payment(accept) {
+	const now = Math.floor(Date.now() / 1000);
+	const nonceBytes = crypto.getRandomValues(new Uint8Array(32));
+	const nonce = "0x" + bytesToHex(nonceBytes).slice(2);
+	const validAfter  = "0";
+	const validBefore = String(now + (accept.maxTimeoutSeconds ?? 120));
+	const value       = String(accept.amount);
+	const from        = state.account;
+	const to          = accept.payTo;
+
+	const domain = {
+		name: accept.extra?.name ?? "USD Coin",
+		version: accept.extra?.version ?? "2",
+		chainId: BASE_CHAIN_ID,
+		verifyingContract: accept.asset
+	};
+	const types = {
+		TransferWithAuthorization: [
+			{ name: "from",        type: "address" },
+			{ name: "to",          type: "address" },
+			{ name: "value",       type: "uint256" },
+			{ name: "validAfter",  type: "uint256" },
+			{ name: "validBefore", type: "uint256" },
+			{ name: "nonce",       type: "bytes32" }
+		]
+	};
+	const message = { from, to, value, validAfter, validBefore, nonce };
+	const signature = await state.walletClient.signTypedData({
+		account: from,
+		domain, types,
+		primaryType: "TransferWithAuthorization",
+		message
+	});
+	const payload = {
+		x402Version: 2,
+		scheme: "exact",
+		network: "eip155:8453",
+		payload: {
+			signature,
+			authorization: { from, to, value, validAfter, validBefore, nonce }
+		}
+	};
+	return btoa(JSON.stringify(payload));
+}
+
+// ── Storage for watches (no view keys, ever) ────────────────────
+function loadWatches() {
+	try {
+		const raw = localStorage.getItem(STORAGE_KEY);
+		if (!raw) return [];
+		const arr = JSON.parse(raw);
+		return Array.isArray(arr) ? arr : [];
+	}
+	catch (_) { return []; }
+}
+
+function saveWatches(watches) {
+	localStorage.setItem(STORAGE_KEY, JSON.stringify(watches));
+	$("watches-count").textContent = "(" + watches.length + ")";
+}
+
+$("watches-count").textContent = "(" + loadWatches().length + ")";
+
+// ── New watch tab handler ───────────────────────────────────────
+$("watch-submit").addEventListener("click", async () => {
+	const btn = $("watch-submit");
+	const body = {
+		chain:    $("w-chain").value,
+		address:  $("w-address").value.trim(),
+		viewKey:  $("w-viewkey").value.trim(),
+		webhookUrl: $("w-webhook").value.trim()
+	};
+	const bh = $("w-birthday").value.trim();
+	if (bh) body.birthdayHeight = Number(bh);
+	if (!body.address || !body.viewKey || !body.webhookUrl) {
+		setResult("watch-result", "error", "<label>Missing fields</label>Address, view key and webhook URL are all required.");
+		return;
+	}
+	if (!state.account) { setResult("watch-result", "info", "<label>Connect a wallet first</label>The x402 payment needs a signer."); return; }
+	clearResult("watch-result");
+	btn.disabled = true; btn.textContent = "Signing $0.10 payment…";
+	try {
+		const r = await payX402("POST", "/v1/private/watch", body);
+		if (r.status >= 200 && r.status < 300) {
+			const w = r.body;
+			const watches = loadWatches();
+			watches.unshift({
+				id: w.watchId, token: w.watchToken,
+				webhookSecret: w.webhookSecret,
+				chain: body.chain, address: body.address,
+				webhookUrl: body.webhookUrl,
+				createdAt: Date.now()
+			});
+			saveWatches(watches);
+			setResult("watch-result", "success",
+				`<label>Watch created</label>
+				<div class="kv">watchId: ${esc(w.watchId)}<br>
+				watchToken: ${esc(w.watchToken)} <span class="muted">(saved to this browser only)</span><br>
+				webhookSecret: ${esc(w.webhookSecret)} <span class="muted">(use to verify HMAC-SHA256 signatures on incoming webhooks)</span><br>
+				credit: ${esc(w.creditAtomic ?? "100000")} atomic USDC (~5 idle days)</div>`);
+			// Reset just the form, keep the wallet connected.
+			["w-address","w-viewkey","w-webhook","w-birthday"].forEach((id) => { $(id).value = ""; });
+			refreshWallet();
+		}
+		else {
+			setResult("watch-result", "error", `<label>Error ${esc(r.status)}</label>${esc(r.body?.error?.message ?? JSON.stringify(r.body))}`);
+		}
+	}
+	catch (err) {
+		setResult("watch-result", "error", `<label>Failed</label>${esc(err?.message ?? String(err))}`);
+	}
+	finally {
+		btn.disabled = false; btn.textContent = "Pay $0.10 and create watch";
+	}
+});
+
+// ── My watches tab handler ─────────────────────────────────────
+async function fetchStatus(w) {
+	try {
+		const r = await fetch(`${API_BASE}/v1/private/watch/${encodeURIComponent(w.id)}`, {
+			headers: { "x-watch-token": w.token }
+		});
+		if (!r.ok) return { error: "HTTP " + r.status };
+		return await r.json();
+	}
+	catch (err) { return { error: err?.message ?? String(err) }; }
+}
+
+function fmtUsd(atomic) {
+	if (atomic == null) return "?";
+	const n = Number(atomic);
+	if (!Number.isFinite(n)) return "?";
+	return "$" + (n / 1_000_000).toFixed(n >= 100_000 ? 2 : 4);
+}
+
+async function renderWatches() {
+	const watches = loadWatches();
+	const list = $("watches-list");
+	if (!watches.length) { list.innerHTML = '<div class="empty">No watches saved in this browser yet. Create one on the <a href="#" data-jump="watch">New watch</a> tab.</div>'; bindJumpLinks(); return; }
+	let rows = `<table class="watches"><thead><tr><th>Chain</th><th>Address</th><th>State / credit</th><th>Last delivery</th><th class="actions">Actions</th></tr></thead><tbody>`;
+	for (const w of watches) {
+		const idAttr = esc(w.id);
+		rows += `<tr id="row-${idAttr}">
+			<td>${esc(w.chain)}</td>
+			<td><span class="kv">${esc(w.address.slice(0, 16))}…</span><br><span class="muted kv">${esc(w.id)}</span></td>
+			<td id="state-${idAttr}" class="kv">loading…</td>
+			<td id="last-${idAttr}" class="kv">—</td>
+			<td class="actions">
+				<button data-act="topup10" data-id="${idAttr}">+$0.10</button>
+				<button data-act="topup1"  data-id="${idAttr}">+$1</button>
+				<button data-act="topup5"  data-id="${idAttr}">+$5</button>
+				<button data-act="test"    data-id="${idAttr}">Test hook</button>
+				<button data-act="cancel"  data-id="${idAttr}" class="danger">Cancel</button>
+				<button data-act="forget"  data-id="${idAttr}" class="danger">Forget local</button>
+			</td>
+		</tr>`;
+	}
+	rows += "</tbody></table>";
+	list.innerHTML = rows;
+	bindWatchActions();
+	// Fetch statuses in parallel.
+	for (const w of watches) {
+		fetchStatus(w).then((status) => {
+			const stateEl = $("state-" + w.id);
+			const lastEl  = $("last-" + w.id);
+			if (!stateEl) return;
+			if (status.error) { stateEl.innerHTML = `<span style="color:var(--danger)">${esc(status.error)}</span>`; return; }
+			const credit = status.credit ?? {};
+			const stateLabel = status.state ?? "?";
+			const lowFlag = credit.low_credit ? ' <span style="color:var(--warn)">⚠ LOW</span>' : "";
+			stateEl.innerHTML = `${esc(stateLabel)}${lowFlag}<br><span class="muted">${esc(fmtUsd(credit.remaining_atomic))} (~${esc((credit.days_remaining ?? 0).toFixed(1))} days)</span>`;
+			if (status.last_delivered_at_ms) {
+				const age = ((Date.now() - Number(status.last_delivered_at_ms)) / 60000).toFixed(0);
+				lastEl.innerHTML = `${esc(status.last_delivered_event ?? "?")}<br><span class="muted">${esc(age)} min ago</span>`;
+			}
+			else {
+				lastEl.innerHTML = `<span class="muted">never</span>`;
+			}
+		});
+	}
+}
+
+function bindWatchActions() {
+	document.querySelectorAll("#watches-list button[data-act]").forEach((b) => {
+		b.addEventListener("click", () => onWatchAction(b.dataset.act, b.dataset.id));
+	});
+}
+
+function bindJumpLinks() {
+	document.querySelectorAll("[data-jump]").forEach((el) => {
+		el.addEventListener("click", (e) => {
+			e.preventDefault();
+			document.querySelector(`nav.tabs .tab[data-tab="${el.dataset.jump}"]`)?.click();
+		});
+	});
+}
+
+async function onWatchAction(act, id) {
+	const watches = loadWatches();
+	const w = watches.find((x) => x.id === id);
+	if (!w) return;
+	clearResult("watches-result");
+	if (act === "forget") {
+		if (!confirm("Forget this watch locally? The watch keeps running server-side until expiry or cancel. You will lose the token — irreversible.")) return;
+		saveWatches(watches.filter((x) => x.id !== id));
+		renderWatches();
+		return;
+	}
+	if (act === "test") {
+		try {
+			const r = await fetch(`${API_BASE}/v1/private/watch/${encodeURIComponent(id)}/test`, { method: "POST", headers: { "x-watch-token": w.token } });
+			const body = await r.json();
+			setResult("watches-result", r.ok ? "success" : "error", `<label>Test hook ${esc(r.status)}</label><pre style="white-space:pre-wrap">${esc(JSON.stringify(body, null, 2))}</pre>`);
+		} catch (err) {
+			setResult("watches-result", "error", `<label>Test failed</label>${esc(err?.message ?? err)}`);
+		}
+		return;
+	}
+	if (act === "cancel") {
+		if (!confirm("Cancel this watch? Any remaining credit is forfeited (no refunds — keeps the API key-free).")) return;
+		try {
+			const r = await fetch(`${API_BASE}/v1/private/watch/${encodeURIComponent(id)}`, { method: "DELETE", headers: { "x-watch-token": w.token } });
+			if (r.ok) {
+				setResult("watches-result", "success", `<label>Cancelled</label>The watch is marked cancelled server-side. The localStorage entry is kept so you can refer back; click <em>Forget local</em> to remove it.`);
+				renderWatches();
+			} else {
+				setResult("watches-result", "error", `<label>Cancel failed</label>HTTP ${esc(r.status)}`);
+			}
+		} catch (err) {
+			setResult("watches-result", "error", `<label>Cancel failed</label>${esc(err?.message ?? err)}`);
+		}
+		return;
+	}
+	if (act === "topup10" || act === "topup1" || act === "topup5") {
+		if (!state.account) { setResult("watches-result", "info", "<label>Connect a wallet first</label>"); return; }
+		const path = act === "topup10" ? "/v1/private/topup" : act === "topup1" ? "/v1/private/topup-1" : "/v1/private/topup-5";
+		const label = act === "topup10" ? "$0.10" : act === "topup1" ? "$1.00" : "$5.00";
+		try {
+			const r = await payX402("POST", path, { watchId: w.id, watchToken: w.token });
+			if (r.status >= 200 && r.status < 300) {
+				const c = r.body?.credit ?? {};
+				setResult("watches-result", "success", `<label>Topped up ${esc(label)}</label>Credit now ${esc(fmtUsd(c.remaining_atomic))} (~${esc((c.days_remaining ?? 0).toFixed(1))} days remaining at the idle rate).`);
+				renderWatches();
+				refreshWallet();
+			} else {
+				setResult("watches-result", "error", `<label>Top-up failed (${esc(r.status)})</label>${esc(r.body?.error?.message ?? JSON.stringify(r.body))}`);
+			}
+		} catch (err) {
+			setResult("watches-result", "error", `<label>Top-up failed</label>${esc(err?.message ?? err)}`);
+		}
+	}
+}
+
+$("watches-refresh").addEventListener("click", renderWatches);
+
+$("watches-export").addEventListener("click", () => {
+	const data = JSON.stringify(loadWatches(), null, 2);
+	const blob = new Blob([data], { type: "application/json" });
+	const a = document.createElement("a");
+	a.href = URL.createObjectURL(blob);
+	a.download = `seneschal-watches-${new Date().toISOString().slice(0,10)}.json`;
+	a.click();
+	URL.revokeObjectURL(a.href);
+});
+
+$("watches-import-btn").addEventListener("click", () => $("watches-import").click());
+$("watches-import").addEventListener("change", async (e) => {
+	const file = e.target.files?.[0]; if (!file) return;
+	try {
+		const txt = await file.text();
+		const parsed = JSON.parse(txt);
+		if (!Array.isArray(parsed)) throw new Error("Expected a JSON array");
+		const merged = loadWatches();
+		for (const w of parsed) {
+			if (w && w.id && w.token && !merged.find((x) => x.id === w.id)) merged.push(w);
+		}
+		saveWatches(merged);
+		setResult("watches-result", "success", `<label>Imported</label>${esc(parsed.length)} entries inspected; ${esc(merged.length)} watches now in this browser.`);
+		renderWatches();
+	}
+	catch (err) {
+		setResult("watches-result", "error", `<label>Import failed</label>${esc(err?.message ?? err)}`);
+	}
+	e.target.value = "";
+});
+
+// ── Historical tab handler ─────────────────────────────────────
+$("historical-submit").addEventListener("click", async () => {
+	const btn = $("historical-submit");
+	const body = {
+		chain:    $("h-chain").value,
+		address:  $("h-address").value.trim(),
+		viewKey:  $("h-viewkey").value.trim(),
+		includeNotes: $("h-notes").checked
+	};
+	const bh = $("h-birthday").value.trim();
+	if (bh) body.birthdayHeight = Number(bh);
+	if (!body.address || !body.viewKey) {
+		setResult("historical-result", "error", "<label>Missing fields</label>Address and view key are required.");
+		return;
+	}
+	if (!state.account) { setResult("historical-result", "info", "<label>Connect a wallet first</label>"); return; }
+	clearResult("historical-result");
+	btn.disabled = true; btn.textContent = "Signing $0.50 payment…";
+	try {
+		const r = await payX402("POST", "/v1/private/historical", body);
+		if (r.status >= 200 && r.status < 300) {
+			const t = r.body.totals ?? {};
+			let notesHtml = "";
+			if (Array.isArray(r.body.notes) && r.body.notes.length) {
+				notesHtml = `<label>Notes (${r.body.notes.length})</label><pre style="white-space:pre-wrap;max-height:18em;overflow:auto">${esc(JSON.stringify(r.body.notes, null, 2))}</pre>`;
+			}
+			setResult("historical-result", "success",
+				`<label>Scan complete</label>
+				<div class="kv">received: ${esc(t.received_atomic)} atomic<br>
+				spent: ${esc(t.spent_atomic)} atomic<br>
+				spendable: ${esc(t.spendable_atomic)} atomic</div>
+				<div class="muted" style="margin-top:0.4em">${esc(r.body.view_key_handling ?? "")}</div>
+				${notesHtml}`);
+			refreshWallet();
+		}
+		else {
+			setResult("historical-result", "error", `<label>Error ${esc(r.status)}</label>${esc(r.body?.error?.message ?? JSON.stringify(r.body))}`);
+		}
+	}
+	catch (err) {
+		setResult("historical-result", "error", `<label>Failed</label>${esc(err?.message ?? err)}`);
+	}
+	finally {
+		btn.disabled = false; btn.textContent = "Pay $0.50 and run scan";
+	}
+});
+
+// ── Derive tab handler ─────────────────────────────────────────
+$("derive-submit").addEventListener("click", async () => {
+	const btn = $("derive-submit");
+	const phraseEl = $("d-phrase");
+	let phrase = (phraseEl.value || "").trim();
+	if (phrase.length === 0) phrase = (phraseEl.getAttribute("placeholder") || "").trim();
+	const words = phrase.split(/\s+/).filter(Boolean);
+	if (words.length !== 12 && words.length !== 24) {
+		setResult("derive-result", "error", `<label>Bad word count</label>BIP-39 phrase must be 12 or 24 words (got ${words.length}). Leave blank to use the canonical test vector.`);
+		return;
+	}
+	btn.disabled = true; btn.textContent = "Deriving…";
+	clearResult("derive-result");
+	try {
+		const r = await fetch(`${API_BASE}/v1/private/derive-viewkey`, {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({ chain: $("d-chain").value, network: $("d-network").value, phrase })
+		});
+		const body = await r.json();
+		if (!r.ok) {
+			const msg = r.status === 429
+				? "Rate limited (6/min/IP). Wait a minute or use orchard-scanner offline."
+				: (body?.error?.message ?? "HTTP " + r.status);
+			setResult("derive-result", "error", `<label>Error</label>${esc(msg)}`);
+			return;
+		}
+		const parts = [
+			`<label>Unified Full Viewing Key (read-only)</label><div class="kv">${esc(body.ufvk ?? "(none)")}</div>`
+		];
+		if (body.sapling_fvk)     parts.push(`<label>Sapling FVK</label><div class="kv">${esc(body.sapling_fvk)}</div>`);
+		if (body.transparent_fvk) parts.push(`<label>Transparent FVK</label><div class="kv">${esc(body.transparent_fvk)}</div>`);
+		if (body.WARNING) parts.push(`<label style="color:var(--warn)">Returned warning</label><div class="muted">${esc(body.WARNING)}</div>`);
+		setResult("derive-result", "success", parts.join(""));
+	}
+	catch (err) {
+		setResult("derive-result", "error", `<label>Network error</label>${esc(err?.message ?? err)}`);
+	}
+	finally {
+		btn.disabled = false; btn.textContent = "Derive UFVK";
+	}
+});
+
+// ── Initial render of the (empty) watch list ───────────────────
+renderWatches();
+
+</script>
+</body>
+</html>

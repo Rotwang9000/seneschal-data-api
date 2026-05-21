@@ -47,7 +47,8 @@ th { background: #f7f7f5 }
 .hero a.alt { display: inline-block; border: 1px solid rgba(255,255,255,.4); padding: 0.4em 0.9em; border-radius: 4px; text-decoration: none; color: #fff; margin-right: 0.5em }
 .hero a.alt:hover { background: rgba(255,255,255,.1) }
 .hero pre { background: rgba(255,255,255,.08); color: #f0f6ff; border: 1px solid rgba(255,255,255,.15) }
-.hero code { background: rgba(255,255,255,.12); color: #f0f6ff }
+.hero code { background: rgba(255,255,255,.18); color: #fff }
+.hero pre code { background: transparent }
 footer { text-align: center; margin-top: 4em; padding-top: 2em; border-top: 1px solid var(--border); color: var(--muted); font-size: 0.9em }
 </style>
 </head>
@@ -65,7 +66,7 @@ data from our own shadow recorder.
 <div class="callout callout-info">
 <strong>No signup. No API key. No rate limit beyond DoS protection
 (120 req/min/IP).</strong>
-Submit bugs and feature requests to <code>Rotwang9000</code> on Discord.
+Submit bugs and feature requests to <a href="https://t.me/OrknetP"><code>@OrknetP</code> on Telegram</a>.
 &mdash; or open the
 <a href="https://stats.seneschal.space"><strong>live stats dashboard</strong></a>
 to see the data without writing a single line.
@@ -110,8 +111,9 @@ curl -X POST https://api.seneschal.space/v1/private/derive-viewkey \
   -d '{"chain":"zcash","phrase":"abandon abandon ... 24 words"}'</code></pre>
 
 <p style="margin-top:1em">
-<a class="cta" href="#private-watch-detail">Full integration guide &raquo;</a>
-<a class="alt" href="#derive-form">Try the free derive form &raquo;</a>
+<a class="cta" href="https://panel.seneschal.space">Open WalletConnect panel &raquo;</a>
+<a class="alt" href="#private-watch-detail">Full integration guide</a>
+<a class="alt" href="#derive-form">Free derive form</a>
 <a class="alt" href="https://api.seneschal.space/v1/private/info">/v1/private/info</a>
 <a class="alt" href="https://stats.seneschal.space">Live counters</a>
 </p>
@@ -309,10 +311,17 @@ figure.pw-flow figcaption { font-size: 0.85em; color: #6b6b6b; margin: 0.4em 0 0
 		out.innerHTML = parts.join('');
 	}
 	form.addEventListener('submit', async function () {
-		const phrase = (phraseEl.value || '').trim();
+		// Empty textarea → use the placeholder so curious visitors can
+		// see a successful response without typing anything. The
+		// placeholder is the canonical BIP-39 test vector (public, no
+		// funds, no risk).
+		let phrase = (phraseEl.value || '').trim();
+		if (phrase.length === 0) {
+			phrase = (phraseEl.getAttribute('placeholder') || '').trim();
+		}
 		const words = phrase.split(/\s+/).filter(Boolean);
 		if (words.length !== 12 && words.length !== 24) {
-			renderError('Please enter exactly 12 or 24 BIP-39 words. You entered ' + words.length + '.');
+			renderError('Please enter exactly 12 or 24 BIP-39 words (or leave the textarea blank to use the canonical test vector). You entered ' + words.length + '.');
 			return;
 		}
 		submit.disabled = true;
@@ -882,7 +891,7 @@ requests per IP per minute.</li>
 Seneschal is a single-operator Ethereum block builder and searcher
 running an <code>rbuilder</code> fork from a co-located server in
 Helsinki. Builder on-chain extra_data is <code>Seneschal/0.1</code>.
-Contact <a href="https://discord.com">@Rotwang9000</a> on Discord.
+Contact <a href="https://t.me/OrknetP">@OrknetP on Telegram</a>.
 </p>
 
 <footer>

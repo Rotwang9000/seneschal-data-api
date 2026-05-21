@@ -134,9 +134,15 @@ export async function buildApp(options = {}) {
 		// browser. The endpoints themselves are protected by x402 +
 		// per-route rate limits — CORS isn't the security control.
 		origin: true,
-		methods: ['GET', 'POST', 'OPTIONS'],
+		methods: ['GET', 'POST', 'DELETE', 'OPTIONS'],
 		allowedHeaders: ['content-type', 'x-payment', 'x-watch-token'],
-		exposedHeaders: ['x-payment-response', 'x-ratelimit-limit', 'x-ratelimit-remaining', 'x-ratelimit-reset'],
+		// `payment-required` carries the base64-encoded x402 challenge
+		// on 402 responses; the in-browser panel at panel.seneschal.space
+		// (and any future browser-based x402 client) MUST be able to
+		// read it via fetch().headers.get(...). DELETE is allowed for
+		// the watch-cancel route. The x-ratelimit-* headers help the
+		// derive form back off gracefully.
+		exposedHeaders: ['payment-required', 'x-payment-response', 'x-ratelimit-limit', 'x-ratelimit-remaining', 'x-ratelimit-reset'],
 		maxAge: 86400
 	});
 

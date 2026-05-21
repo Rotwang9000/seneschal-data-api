@@ -26,6 +26,11 @@ h2 { font-weight: 600; font-size: 1.15em; margin-top: 1.9em }
 h3 { font-weight: 600; font-size: 0.95em; margin: 0.8em 0 0.2em; text-transform: uppercase; letter-spacing: 0.04em; color: #555 }
 code { background:#f4f4f4; padding: 1px 5px; border-radius: 3px; font-size: 0.92em }
 pre { background: #f4f4f4; padding: 0.8em; border-radius: 4px; overflow-x: auto; font-size: 0.85em; line-height: 1.4 }
+/* Inside the dark-blue hero the default light-grey code pill becomes
+   illegible (yellow-on-white feel). Re-style inline code there with a
+   translucent dark background and high-contrast white text. */
+.hero code { background: rgba(255,255,255,.18); color: #fff; padding: 0 6px; border-radius: 3px }
+.hero pre code { background: transparent; padding: 0 }
 a { color: var(--brand) }
 .muted { color: var(--muted); font-size: 0.92em }
 .row { display: flex; gap: 0.8em; flex-wrap: wrap; margin: 0.8em 0 }
@@ -93,7 +98,8 @@ figure.flow figcaption { font-size: 0.85em; color: var(--muted); margin: 0.4em 0
 </ul>
 
 <p style="margin-top:1.2em">
-<a class="cta" href="https://docs.seneschal.space/#private-watch-detail">How it works &raquo;</a>
+<a class="cta" href="https://panel.seneschal.space">Open control panel (WalletConnect) &raquo;</a>
+<a class="alt" href="https://docs.seneschal.space/#private-watch-detail">How it works</a>
 <a class="alt" href="https://api.seneschal.space/v1/private/info">/v1/private/info (live)</a>
 <a class="alt" href="https://stats.seneschal.space">Live stats</a>
 </p>
@@ -302,10 +308,17 @@ figure.flow figcaption { font-size: 0.85em; color: var(--muted); margin: 0.4em 0
 	}
 
 	form.addEventListener('submit', async function () {
-		const phrase = (phraseEl.value || '').trim();
+		// Empty textarea → use the placeholder so curious visitors can
+		// see a successful response without typing anything. The
+		// placeholder is the canonical BIP-39 test vector (public, no
+		// funds, no risk).
+		let phrase = (phraseEl.value || '').trim();
+		if (phrase.length === 0) {
+			phrase = (phraseEl.getAttribute('placeholder') || '').trim();
+		}
 		const words = phrase.split(/\s+/).filter(Boolean);
 		if (words.length !== 12 && words.length !== 24) {
-			renderError('Please enter exactly 12 or 24 BIP-39 words. You entered ' + words.length + '.');
+			renderError('Please enter exactly 12 or 24 BIP-39 words (or leave the textarea blank to use the canonical test vector). You entered ' + words.length + '.');
 			return;
 		}
 		submit.disabled = true;
@@ -417,7 +430,7 @@ privacy-chain (Monero/Zcash chain-tip facts from our nodes).</li>
 </div>
 
 <p class=muted>
-Contact: Rotwang9000 on Discord.
+Contact: <a href="https://t.me/OrknetP">@OrknetP on Telegram</a>.
 </p>
 </body>
 </html>

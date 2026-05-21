@@ -216,6 +216,30 @@ describe('CORS headers', () => {
 		const allowHeaders = r.headers['access-control-allow-headers'] ?? '';
 		expect(allowHeaders).toMatch(/content-type/i);
 	});
+
+	test('exposes the payment-required header so browsers can read x402 challenges', async () => {
+		// The panel.seneschal.space WalletConnect UI is a browser
+		// client. It cannot read response headers cross-origin unless
+		// the server explicitly lists them in `access-control-expose-
+		// headers`. The base64-encoded x402 challenge ships in
+		// `payment-required` — without exposure the browser cannot
+		// build the signed payment payload and the entire panel breaks.
+		const r = await app.inject({
+			method: 'OPTIONS',
+			url: '/v1/private/topup',
+			headers: {
+				origin: 'https://panel.seneschal.space',
+				'access-control-request-method': 'POST',
+				'access-control-request-headers': 'content-type, x-payment'
+			}
+		});
+		const exposed = r.headers['access-control-expose-headers'] ?? '';
+		expect(exposed).toMatch(/payment-required/i);
+		expect(exposed).toMatch(/x-payment-response/i);
+		// Lock DELETE in for the watch-cancel route.
+		const methods = r.headers['access-control-allow-methods'] ?? '';
+		expect(methods).toMatch(/DELETE/);
+	});
 });
 
 describe('error handler — status-code pass-through', () => {
