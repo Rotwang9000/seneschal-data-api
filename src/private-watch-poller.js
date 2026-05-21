@@ -46,6 +46,11 @@ import {
 
 const DEFAULT_WEBHOOK_TIMEOUT_MS = 8_000;
 const MAX_LOG_REASON_LEN = 200;
+// Max bytes we'll buffer from a misbehaving receiver before
+// abandoning the read. 4 KB is enough for any reasonable status
+// payload, and tiny enough that a hostile responder can't tie up the
+// poller with a slow-loris megabyte.
+const DEFAULT_RESPONSE_MAX_BYTES = WATCH_CONSTANTS.WEBHOOK_RESPONSE_MAX_BYTES;
 
 /**
  * Run a single poller tick. Returns a summary object so the CLI
@@ -68,6 +73,7 @@ export async function runPollerTick(deps) {
 		nfptClient,
 		fetchImpl = globalThis.fetch,
 		webhookTimeoutMs = DEFAULT_WEBHOOK_TIMEOUT_MS,
+		responseMaxBytes = DEFAULT_RESPONSE_MAX_BYTES,
 		logger = console,
 		now = () => Date.now()
 	} = deps;
@@ -95,7 +101,8 @@ export async function runPollerTick(deps) {
 		try {
 			await pollOne({
 				row, db, masterKey, nfptClient,
-				fetchImpl, webhookTimeoutMs, logger, now, summary
+				fetchImpl, webhookTimeoutMs, responseMaxBytes,
+				logger, now, summary
 			});
 		}
 		catch (err) {
@@ -114,7 +121,7 @@ export async function runPollerTick(deps) {
 	return summary;
 }
 
-async function pollOne({ row, db, masterKey, nfptClient, fetchImpl, webhookTimeoutMs, logger, now, summary }) {
+async function pollOne({ row, db, masterKey, nfptClient, fetchImpl, webhookTimeoutMs, responseMaxBytes, logger, now, summary }) {
 	const viewKey = decryptViewKey(row.view_key_ct, masterKey);
 	let jobId = row.nfpt_job_id;
 	let jobToken = row.nfpt_job_token;
@@ -183,13 +190,20 @@ async function pollOne({ row, db, masterKey, nfptClient, fetchImpl, webhookTimeo
 		secret: row.webhook_secret,
 		watchId: row.id,
 		fetchImpl,
-		timeoutMs: webhookTimeoutMs
+		timeoutMs: webhookTimeoutMs,
+		responseMaxBytes
 	});
 	if (result.ok) {
 		summary.webhooks_delivered += 1;
+		const eventLabel = diff.first_complete
+			? 'scan_complete'
+			: diff.balance_changed
+				? 'balance_change'
+				: 'status_change';
 		updateWatchState(db, row.id, {
 			last_delivered_balance: knownJson,
 			last_delivered_at_ms: nowMs,
+			last_delivered_event: eventLabel,
 			delivery_attempts: 0,
 			delivery_count: (row.delivery_count ?? 0) + 1,
 			last_delivery_error: null
@@ -229,10 +243,16 @@ async function startJobForRow({ row, viewKey, nfptClient }) {
 			fromHeight: row.birthday_height ?? undefined
 		});
 	}
+	// NEVER autoDetect for Zcash — it walks the chain backwards from
+	// the tip and can run for hours, holding an NFPT scanner slot for
+	// a single $0.10 watch. The validator already defaults missing
+	// birthdayHeight to NU6 (post-April-2024), which covers virtually
+	// all live wallets. Older wallets must pass an explicit
+	// birthdayHeight.
 	return startOrchardJob(nfptClient, {
 		ufvk: viewKey,
-		birthdayHeight: row.birthday_height ?? undefined,
-		autoDetect: row.birthday_height ? false : true
+		birthdayHeight: row.birthday_height ?? WATCH_CONSTANTS.ZCASH_NU6_HEIGHT,
+		autoDetect: false
 	});
 }
 
@@ -246,7 +266,8 @@ async function startJobForRow({ row, viewKey, nfptClient }) {
 export async function deliverWebhook({
 	url, body, secret, watchId,
 	fetchImpl = globalThis.fetch,
-	timeoutMs = DEFAULT_WEBHOOK_TIMEOUT_MS
+	timeoutMs = DEFAULT_WEBHOOK_TIMEOUT_MS,
+	responseMaxBytes = DEFAULT_RESPONSE_MAX_BYTES
 }) {
 	if (typeof url !== 'string') throw new TypeError('deliverWebhook: url is required');
 	if (typeof body !== 'string') throw new TypeError('deliverWebhook: body must be a string');
@@ -267,6 +288,11 @@ export async function deliverWebhook({
 			},
 			body
 		});
+		// Drain a bounded number of bytes from the response so a
+		// receiver returning a multi-megabyte body can't slow-loris
+		// us. We don't actually use the contents — the status code is
+		// the source of truth.
+		await drainBodyBounded(res, responseMaxBytes, ac);
 		const ok = res.status >= 200 && res.status < 300;
 		return { ok, status: res.status, error: ok ? null : `non-2xx HTTP ${res.status}` };
 	}
@@ -280,6 +306,27 @@ export async function deliverWebhook({
 	finally {
 		clearTimeout(t);
 	}
+}
+
+async function drainBodyBounded(res, maxBytes, ac) {
+	const reader = res?.body?.getReader?.();
+	if (!reader) return; // node-fetch shims without streaming bodies
+	let total = 0;
+	try {
+		while (true) {
+			const { done, value } = await reader.read();
+			if (done) return;
+			if (value) total += value.byteLength;
+			if (total > maxBytes) {
+				try { ac.abort(new Error(`webhook response exceeded ${maxBytes} bytes`)); }
+				catch { /* swallow */ }
+				try { await reader.cancel(); }
+				catch { /* swallow */ }
+				return;
+			}
+		}
+	}
+	catch { /* aborted or socket gone — we don't care about the body */ }
 }
 
 function safeJson(s) {

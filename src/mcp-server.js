@@ -54,7 +54,7 @@ import {
 	healthCheck as nfptHealthCheck
 } from './private-watch-nfpt.js';
 import {
-	validateWatchRequest,
+	resolveAndValidateWatchRequest,
 	buildPrivateInfo,
 	WATCH_CONSTANTS
 } from './private-watch.js';
@@ -374,7 +374,11 @@ export function buildMcpServer(options = {}) {
 		const nfptHealth = privateWatchReady()
 			? await nfptHealthCheck(nfptClient).catch((err) => ({ ok: false, reason: err?.message ?? String(err) }))
 			: { ok: false, reason: 'private watch disabled on this server' };
-		return asContent(buildPrivateInfo({ x402Cfg, nfptHealth }));
+		return asContent(buildPrivateInfo({
+			x402Cfg,
+			nfptHealth,
+			requireHttps: config.privateWatchRequireHttps && !config.privateWatchAllowPrivateWebhooks
+		}));
 	});
 
 	server.registerTool('seneschal_private_watch_create', {
@@ -399,8 +403,9 @@ export function buildMcpServer(options = {}) {
 		}
 		let input;
 		try {
-			input = validateWatchRequest(params, {
-				allowPrivateWebhooks: config.privateWatchAllowPrivateWebhooks
+			input = await resolveAndValidateWatchRequest(params, {
+				allowPrivateWebhooks: config.privateWatchAllowPrivateWebhooks,
+				requireHttps: config.privateWatchRequireHttps && !config.privateWatchAllowPrivateWebhooks
 			});
 		}
 		catch (err) {

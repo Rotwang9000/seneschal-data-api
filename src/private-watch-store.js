@@ -52,6 +52,7 @@ CREATE TABLE IF NOT EXISTS private_watches (
 	delivery_attempts INTEGER DEFAULT 0,
 	delivery_count INTEGER DEFAULT 0,
 	last_delivery_error TEXT,
+	last_delivered_event TEXT,
 	dead INTEGER DEFAULT 0,
 	cancelled INTEGER DEFAULT 0
 );
@@ -65,6 +66,11 @@ CREATE INDEX IF NOT EXISTS idx_watch_poll
  * Open (or create) the watch DB. Pass a `:memory:` path in tests.
  * The parent directory is created if absent so deployments don't
  * have to pre-mkdir the state dir.
+ *
+ * Idempotent schema migration: `last_delivered_event` was added in a
+ * later revision. We ALTER TABLE … ADD COLUMN if the table already
+ * exists without it, ignoring "duplicate column" errors so re-opens
+ * are a no-op.
  */
 export function openWatchDb(path) {
 	if (typeof path !== 'string' || path.length === 0) {
@@ -79,7 +85,15 @@ export function openWatchDb(path) {
 	db.pragma('synchronous = NORMAL');
 	db.pragma('foreign_keys = ON');
 	db.exec(WATCH_DDL);
+	addColumnIfMissing(db, 'private_watches', 'last_delivered_event', 'TEXT');
 	return db;
+}
+
+function addColumnIfMissing(db, table, col, type) {
+	try { db.prepare(`ALTER TABLE ${table} ADD COLUMN ${col} ${type}`).run(); }
+	catch (err) {
+		if (!/duplicate column/i.test(err?.message ?? '')) throw err;
+	}
 }
 
 function sha256(bytes) {
@@ -227,6 +241,7 @@ export function updateWatchState(db, id, patch) {
 		'last_delivered_balance',
 		'last_polled_at_ms',
 		'last_delivered_at_ms',
+		'last_delivered_event',
 		'delivery_attempts',
 		'delivery_count',
 		'last_delivery_error',

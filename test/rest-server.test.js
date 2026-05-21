@@ -681,6 +681,18 @@ describe('private watch routes', () => {
 			watchDb,
 			watchMasterKey: masterKey,
 			nfptClient,
+			// Test webhook URLs use example.com; stub DNS so the
+			// suite doesn't depend on a working resolver.
+			webhookResolver: {
+				resolve4: async (host) => host === 'example.com' ? ['93.184.216.34'] : (() => { const e = new Error('na'); e.code = 'ENODATA'; throw e; })(),
+				resolve6: async () => { const e = new Error('na'); e.code = 'ENODATA'; throw e; }
+			},
+			// Route the /test endpoint's outbound POST through the
+			// composite stub so the test can assert on it.
+			webhookFetchImpl: watchFetch,
+			// Disable HTTPS-only so the loopback-SSRF test exercises
+			// the IP guard rather than tripping the scheme check.
+			privateWatchRequireHttps: false,
 			x402Cfg: {
 				enabled: true,
 				recipient: '0x1234567890abcdef1234567890abcdef12345678',
@@ -764,6 +776,160 @@ describe('private watch routes', () => {
 		expect(r.statusCode).toBe(400);
 	});
 
+	test('POST /v1/private/watch rejects IPv6 loopback (400 SSRF guard)', async () => {
+		moneroIdx = 0;
+		const r = await appWatch.inject({
+			method: 'POST',
+			url: '/v1/private/watch',
+			payload: {
+				chain: 'monero',
+				address: '4' + 'A'.repeat(94),
+				viewKey: '5'.repeat(64),
+				webhookUrl: 'http://[::1]:8080/'
+			}
+		});
+		expect(r.statusCode).toBe(400);
+		expect(r.json().error.message).toMatch(/(IPv6|not allowed)/);
+	});
+
+	test('POST /v1/private/watch rejects durationDays override (400)', async () => {
+		moneroIdx = 0;
+		const r = await appWatch.inject({
+			method: 'POST',
+			url: '/v1/private/watch',
+			payload: {
+				chain: 'monero',
+				address: '4' + 'A'.repeat(94),
+				viewKey: '5'.repeat(64),
+				webhookUrl: watchPort,
+				durationDays: 30
+			}
+		});
+		expect(r.statusCode).toBe(400);
+		expect(r.json().error.message).toMatch(/durationDays is fixed/);
+	});
+
+	test('POST /v1/private/watch rejects DNS-rebind to 127.0.0.1 (400)', async () => {
+		// Build a one-off app whose DNS resolver maps the test host
+		// onto loopback to simulate a DNS-based SSRF.
+		const { openWatchDb } = await import('../src/private-watch-store.js');
+		const watchDb2 = openWatchDb(':memory:');
+		const { createNfptClient } = await import('../src/private-watch-nfpt.js');
+		const okClient = createNfptClient({
+			baseUrl: 'http://nfpt', apiKey: 'k', fetchImpl: nfptStubFetch
+		});
+		moneroIdx = 0;
+		const appRebind = await buildApp({
+			db, sparkPath, morphoPath, shadowPath,
+			rateLimit: false, logger: false, installX402: false,
+			incomeCfg: { enabled: false, reason: 'disabled-in-tests' },
+			watchDb: watchDb2,
+			watchMasterKey: Buffer.from('44'.repeat(32), 'hex'),
+			nfptClient: okClient,
+			privateWatchRequireHttps: false,
+			webhookResolver: {
+				resolve4: async () => ['127.0.0.1'],
+				resolve6: async () => { const e = new Error('na'); e.code = 'ENODATA'; throw e; }
+			},
+			x402Cfg: {
+				enabled: true,
+				recipient: '0x1234567890abcdef1234567890abcdef12345678',
+				network: 'eip155:8453',
+				facilitatorUrl: 'https://x402.org/facilitator',
+				routes: {
+					'POST /v1/private/watch': {
+						accepts: { scheme: 'exact', payTo: '0x1234567890abcdef1234567890abcdef12345678', price: '$0.10', network: 'eip155:8453', maxTimeoutSeconds: 120 },
+						description: 'private watch',
+						mimeType: 'application/json'
+					}
+				}
+			}
+		});
+		const r = await appRebind.inject({
+			method: 'POST',
+			url: '/v1/private/watch',
+			payload: {
+				chain: 'monero',
+				address: '4' + 'A'.repeat(94),
+				viewKey: '5'.repeat(64),
+				webhookUrl: 'http://attacker.example/hook'
+			}
+		});
+		expect(r.statusCode).toBe(400);
+		expect(r.json().error.message).toMatch(/private IPv4 127\.0\.0\.1/);
+		await appRebind.close();
+	});
+
+	test('POST /v1/private/watch/:id/test fires a synthetic signed webhook', async () => {
+		moneroIdx = 0;
+		const c = await appWatch.inject({
+			method: 'POST',
+			url: '/v1/private/watch',
+			payload: {
+				chain: 'monero',
+				address: '4' + 'F'.repeat(94),
+				viewKey: 'a'.repeat(64),
+				webhookUrl: watchPort
+			}
+		});
+		const { watchId, watchToken, webhookSecret } = c.json();
+		expect(c.json().testEndpoint).toBe(`/v1/private/watch/${watchId}/test`);
+		const before = webhookHits.length;
+		const r = await appWatch.inject({
+			method: 'POST',
+			url: `/v1/private/watch/${watchId}/test`,
+			headers: { 'x-watch-token': watchToken }
+		});
+		expect(r.statusCode).toBe(200);
+		expect(r.json().delivered).toBe(true);
+		expect(r.json().event).toBe('synthetic_test');
+		expect(webhookHits.length).toBe(before + 1);
+		const hit = webhookHits[webhookHits.length - 1];
+		const headers = hit.init?.headers ?? {};
+		expect(headers['x-seneschal-signature']).toMatch(/^sha256=[0-9a-f]{64}$/);
+		expect(headers['x-seneschal-event']).toBe('synthetic_test');
+		// Receiver computes its own HMAC and compares against ours.
+		// The wire-format secret is 32 random bytes encoded as 64 hex
+		// chars; signing keys those bytes, not the hex string.
+		const { createHmac } = await import('node:crypto');
+		const expected = 'sha256=' + createHmac('sha256', Buffer.from(webhookSecret, 'hex'))
+			.update(hit.init.body, 'utf8').digest('hex');
+		expect(headers['x-seneschal-signature']).toBe(expected);
+	});
+
+	test('POST /v1/private/watch/:id/test rejects bad token (403)', async () => {
+		moneroIdx = 0;
+		const c = await appWatch.inject({
+			method: 'POST',
+			url: '/v1/private/watch',
+			payload: {
+				chain: 'monero',
+				address: '4' + 'G'.repeat(94),
+				viewKey: 'b'.repeat(64),
+				webhookUrl: watchPort
+			}
+		});
+		const { watchId } = c.json();
+		const r = await appWatch.inject({
+			method: 'POST',
+			url: `/v1/private/watch/${watchId}/test`,
+			headers: { 'x-watch-token': 'nope' }
+		});
+		expect(r.statusCode).toBe(403);
+	});
+
+	test('GET /v1/stats/overview includes private_watch block', async () => {
+		moneroIdx = 0;
+		const r = await appWatch.inject({ method: 'GET', url: '/v1/stats/overview' });
+		expect(r.statusCode).toBe(200);
+		const body = r.json();
+		expect(body.private_watch).toBeDefined();
+		expect(body.private_watch.enabled).toBe(true);
+		expect(body.private_watch.price).toBe('$0.10');
+		expect(body.private_watch.duration_days).toBe(7);
+		expect(body.private_watch.stats.by_chain).toBeDefined();
+	});
+
 	test('GET /v1/private/watch/:id needs the watch token', async () => {
 		moneroIdx = 0;
 		// create
@@ -839,6 +1005,11 @@ describe('private watch routes', () => {
 			watchDb,
 			watchMasterKey: Buffer.from('22'.repeat(32), 'hex'),
 			nfptClient: downClient,
+			webhookResolver: {
+				resolve4: async () => ['93.184.216.34'],
+				resolve6: async () => { const e = new Error('na'); e.code = 'ENODATA'; throw e; }
+			},
+			privateWatchRequireHttps: false,
 			x402Cfg: {
 				enabled: true,
 				recipient: '0x1234567890abcdef1234567890abcdef12345678',

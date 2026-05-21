@@ -1,17 +1,20 @@
 // Tests for the pure-function business logic in private-watch.js.
 // All inputs/outputs are plain JS objects; no DB, no network. Covers
-// validation (happy + bad paths), SSRF guard, balance diffing, and
-// webhook payload shape.
+// validation (happy + bad paths), SSRF guard (sync + DNS-aware),
+// balance diffing, and webhook payload shape.
 
 import { describe, test, expect } from '@jest/globals';
 
 import {
 	validateWatchRequest,
+	resolveAndValidateWatchRequest,
 	assertWebhookUrlSafe,
+	assertWebhookHostResolvesPublic,
 	diffBalance,
 	buildWebhookBody,
 	buildWatchSummary,
 	buildPrivateInfo,
+	buildSyntheticTestBody,
 	WATCH_CONSTANTS
 } from '../src/private-watch.js';
 
@@ -21,7 +24,7 @@ const ZEC_UADDR = 'u1' + 'q'.repeat(100);
 const ZEC_UFVK = 'uview1' + 'q'.repeat(400);
 
 describe('validateWatchRequest — monero', () => {
-	test('accepts a well-formed request', () => {
+	test('accepts a well-formed request and fixes duration to 7 days', () => {
 		const out = validateWatchRequest({
 			chain: 'monero',
 			address: XMR_ADDR,
@@ -29,37 +32,37 @@ describe('validateWatchRequest — monero', () => {
 			webhookUrl: 'https://example.com/hook'
 		});
 		expect(out.chain).toBe('monero');
-		expect(out.durationDays).toBe(WATCH_CONSTANTS.DEFAULT_DURATION_DAYS);
-		expect(out.durationMs).toBe(WATCH_CONSTANTS.DEFAULT_DURATION_DAYS * 86_400_000);
+		expect(out.durationDays).toBe(WATCH_CONSTANTS.FIXED_DURATION_DAYS);
+		expect(out.durationMs).toBe(WATCH_CONSTANTS.FIXED_DURATION_DAYS * 86_400_000);
+		// Monero default has no NU6-like floor: scanner starts from
+		// current tip when birthdayHeight is absent.
 		expect(out.birthdayHeight).toBeNull();
 	});
 
-	test('honours an explicit durationDays in range', () => {
+	test('accepts an explicit birthdayHeight for monero', () => {
 		const out = validateWatchRequest({
 			chain: 'monero',
 			address: XMR_ADDR,
 			viewKey: XMR_VK,
 			webhookUrl: 'https://example.com/hook',
-			durationDays: 14
+			birthdayHeight: 3_200_000
 		});
-		expect(out.durationDays).toBe(14);
+		expect(out.birthdayHeight).toBe(3_200_000);
 	});
 
-	test('rejects out-of-range durationDays', () => {
+	test('accepts durationDays=7 (echo) but rejects any other value', () => {
 		expect(() => validateWatchRequest({
-			chain: 'monero',
-			address: XMR_ADDR,
-			viewKey: XMR_VK,
+			chain: 'monero', address: XMR_ADDR, viewKey: XMR_VK,
 			webhookUrl: 'https://example.com/hook',
-			durationDays: 0
-		})).toThrow(/durationDays must be/);
-		expect(() => validateWatchRequest({
-			chain: 'monero',
-			address: XMR_ADDR,
-			viewKey: XMR_VK,
-			webhookUrl: 'https://example.com/hook',
-			durationDays: 100
-		})).toThrow(/durationDays must be/);
+			durationDays: 7
+		})).not.toThrow();
+		for (const bad of [1, 14, 30, 100, 0, -1, 'oops']) {
+			expect(() => validateWatchRequest({
+				chain: 'monero', address: XMR_ADDR, viewKey: XMR_VK,
+				webhookUrl: 'https://example.com/hook',
+				durationDays: bad
+			})).toThrow(/durationDays is fixed/);
+		}
 	});
 
 	test('rejects a short monero address', () => {
@@ -79,10 +82,30 @@ describe('validateWatchRequest — monero', () => {
 			webhookUrl: 'https://example.com/hook'
 		})).toThrow(/viewKey must be 64 hex/);
 	});
+
+	test('rejects birthdayHeight above the bound', () => {
+		expect(() => validateWatchRequest({
+			chain: 'monero',
+			address: XMR_ADDR,
+			viewKey: XMR_VK,
+			webhookUrl: 'https://example.com/hook',
+			birthdayHeight: WATCH_CONSTANTS.MAX_BIRTHDAY_HEIGHT + 1
+		})).toThrow(/birthdayHeight/);
+	});
 });
 
 describe('validateWatchRequest — zcash', () => {
-	test('accepts a well-formed UFVK request', () => {
+	test('defaults birthdayHeight to NU6 when omitted', () => {
+		const out = validateWatchRequest({
+			chain: 'zcash',
+			address: ZEC_UADDR,
+			viewKey: ZEC_UFVK,
+			webhookUrl: 'https://example.com/hook'
+		});
+		expect(out.birthdayHeight).toBe(WATCH_CONSTANTS.ZCASH_NU6_HEIGHT);
+	});
+
+	test('accepts an explicit birthdayHeight below MAX', () => {
 		const out = validateWatchRequest({
 			chain: 'zcash',
 			address: ZEC_UADDR,
@@ -90,7 +113,6 @@ describe('validateWatchRequest — zcash', () => {
 			webhookUrl: 'https://example.com/hook',
 			birthdayHeight: 3_042_000
 		});
-		expect(out.chain).toBe('zcash');
 		expect(out.birthdayHeight).toBe(3_042_000);
 	});
 
@@ -103,7 +125,7 @@ describe('validateWatchRequest — zcash', () => {
 		})).toThrow(/UFVK/);
 	});
 
-	test('rejects bad birthdayHeight', () => {
+	test('rejects negative birthdayHeight', () => {
 		expect(() => validateWatchRequest({
 			chain: 'zcash',
 			address: ZEC_UADDR,
@@ -114,7 +136,7 @@ describe('validateWatchRequest — zcash', () => {
 	});
 });
 
-describe('assertWebhookUrlSafe', () => {
+describe('assertWebhookUrlSafe — scheme + literal IPv4', () => {
 	const valid = ['https://example.com/hook', 'http://example.com/hook', 'https://sub.domain.io/path?x=1'];
 	for (const u of valid) {
 		test(`accepts ${u}`, () => {
@@ -131,7 +153,7 @@ describe('assertWebhookUrlSafe', () => {
 		'http://192.168.1.1/x',
 		'http://172.16.0.1/',
 		'http://172.31.0.1/',
-		'http://0.0.0.0/'
+		'http://100.64.0.1/' // RFC6598 CGNAT
 	];
 	for (const u of banned) {
 		test(`rejects ${u}`, () => {
@@ -154,6 +176,115 @@ describe('assertWebhookUrlSafe', () => {
 	test('rejects over-length URL', () => {
 		const big = 'https://example.com/' + 'a'.repeat(WATCH_CONSTANTS.WEBHOOK_URL_MAX_LEN);
 		expect(() => assertWebhookUrlSafe(big)).toThrow(/exceeds/);
+	});
+
+	test('rejects URL with embedded credentials', () => {
+		expect(() => assertWebhookUrlSafe('https://user:pw@example.com/'))
+			.toThrow(/userinfo/);
+	});
+
+	test('rejects http when requireHttps is set', () => {
+		expect(() => assertWebhookUrlSafe('http://example.com/', { requireHttps: true }))
+			.toThrow(/https:\/\//);
+		expect(() => assertWebhookUrlSafe('https://example.com/', { requireHttps: true }))
+			.not.toThrow();
+	});
+});
+
+describe('assertWebhookUrlSafe — IPv6 literals', () => {
+	const badV6 = [
+		'http://[::1]/',
+		'http://[::]/',
+		'http://[fe80::1]/',
+		'http://[fc00::1]/',
+		'http://[fd00::1234]/',
+		'http://[::ffff:127.0.0.1]/' // v4-mapped loopback
+	];
+	for (const u of badV6) {
+		test(`rejects ${u}`, () => {
+			expect(() => assertWebhookUrlSafe(u)).toThrow(/(IPv6|not allowed)/);
+		});
+	}
+
+	test('accepts a globally-routable IPv6 host', () => {
+		expect(() => assertWebhookUrlSafe('http://[2606:4700::1]/')).not.toThrow();
+	});
+});
+
+describe('assertWebhookHostResolvesPublic', () => {
+	function makeResolver(map4 = {}, map6 = {}) {
+		return {
+			async resolve4(host) {
+				if (host in map4) return map4[host];
+				const err = new Error('no A'); err.code = 'ENODATA'; throw err;
+			},
+			async resolve6(host) {
+				if (host in map6) return map6[host];
+				const err = new Error('no AAAA'); err.code = 'ENODATA'; throw err;
+			}
+		};
+	}
+
+	test('accepts a host that resolves to a public IPv4', async () => {
+		const resolver = makeResolver({ 'example.com': ['93.184.216.34'] });
+		await expect(assertWebhookHostResolvesPublic('https://example.com/x', { resolver }))
+			.resolves.toBeUndefined();
+	});
+
+	test('rejects DNS rebind to 127.0.0.1', async () => {
+		const resolver = makeResolver({ 'evil.example.com': ['127.0.0.1'] });
+		await expect(assertWebhookHostResolvesPublic('https://evil.example.com/x', { resolver }))
+			.rejects.toThrow(/private IPv4 127\.0\.0\.1/);
+	});
+
+	test('rejects DNS rebind to private IPv6', async () => {
+		const resolver = makeResolver({}, { 'evil6.example.com': ['fc00::1'] });
+		await expect(assertWebhookHostResolvesPublic('https://evil6.example.com/x', { resolver }))
+			.rejects.toThrow(/private IPv6/);
+	});
+
+	test('skips DNS lookup if hostname is already a literal IP', async () => {
+		// resolver would throw if called; literal IPs short-circuit.
+		const resolver = {
+			resolve4() { throw new Error('should not be called'); },
+			resolve6() { throw new Error('should not be called'); }
+		};
+		await expect(assertWebhookHostResolvesPublic('http://93.184.216.34/x', { resolver }))
+			.resolves.toBeUndefined();
+	});
+});
+
+describe('resolveAndValidateWatchRequest', () => {
+	test('passes when DNS resolves to public IPs', async () => {
+		const resolver = {
+			resolve4: async () => ['93.184.216.34'],
+			resolve6: async () => { const e = new Error('na'); e.code = 'ENODATA'; throw e; }
+		};
+		const out = await resolveAndValidateWatchRequest({
+			chain: 'monero', address: XMR_ADDR, viewKey: XMR_VK,
+			webhookUrl: 'https://example.com/hook'
+		}, { resolver });
+		expect(out.chain).toBe('monero');
+	});
+
+	test('fails on DNS-resolved private IP', async () => {
+		const resolver = {
+			resolve4: async () => ['10.0.0.5'],
+			resolve6: async () => { const e = new Error('na'); e.code = 'ENODATA'; throw e; }
+		};
+		await expect(resolveAndValidateWatchRequest({
+			chain: 'monero', address: XMR_ADDR, viewKey: XMR_VK,
+			webhookUrl: 'https://attacker.example/hook'
+		}, { resolver })).rejects.toThrow(/private IPv4/);
+	});
+
+	test('skips DNS check when allowPrivateWebhooks is set', async () => {
+		const resolver = { resolve4: async () => ['10.0.0.5'], resolve6: async () => [] };
+		const out = await resolveAndValidateWatchRequest({
+			chain: 'monero', address: XMR_ADDR, viewKey: XMR_VK,
+			webhookUrl: 'http://127.0.0.1/hook'
+		}, { resolver, allowPrivateWebhooks: true });
+		expect(out.webhookUrl).toBe('http://127.0.0.1/hook');
 	});
 });
 
@@ -237,8 +368,22 @@ describe('buildWebhookBody', () => {
 	});
 });
 
+describe('buildSyntheticTestBody', () => {
+	test('returns a valid signed-payload-shaped JSON marked synthetic', () => {
+		const body = buildSyntheticTestBody({
+			watchId: 'w1', chain: 'monero', address: XMR_ADDR, nowMs: 1_700_000_000_000
+		});
+		const obj = JSON.parse(body);
+		expect(obj.event).toBe('synthetic_test');
+		expect(obj.watchId).toBe('w1');
+		expect(obj.timestamp).toBe(new Date(1_700_000_000_000).toISOString());
+		expect(obj.delta.balance_atomic).toBe('0');
+		expect(obj.current.note).toMatch(/synthetic test event/);
+	});
+});
+
 describe('buildWatchSummary', () => {
-	test('strips sensitive fields and keeps state counters', () => {
+	test('strips sensitive fields and keeps state counters + new last_event fields', () => {
 		const row = {
 			id: 'w1',
 			token_hash: 'abc',
@@ -254,14 +399,17 @@ describe('buildWatchSummary', () => {
 			delivery_count: 5,
 			last_polled_at_ms: 7000,
 			last_delivered_at_ms: 6000,
+			last_delivered_event: 'balance_change',
 			last_delivery_error: 'old timeout',
 			last_known_balance: '{"balanceAtomic":"1"}',
 			last_delivered_balance: '{"balanceAtomic":"0"}'
 		};
-		const out = buildWatchSummary(row, { nowMs: 4000 });
+		const out = buildWatchSummary(row, { nowMs: 4000, pollIntervalSec: 180 });
 		expect(out.watchId).toBe('w1');
 		expect(out.expires_in_ms).toBe(4000);
 		expect(out.delivery_count).toBe(5);
+		expect(out.last_delivered_event).toBe('balance_change');
+		expect(out.next_poll_eta_ms).toBe((7000 + 180_000) - 4000);
 		expect(out.last_known_balance).toEqual({ balanceAtomic: '1' });
 		expect(out).not.toHaveProperty('view_key_ct');
 		expect(out).not.toHaveProperty('webhook_secret');
@@ -269,10 +417,23 @@ describe('buildWatchSummary', () => {
 		expect(JSON.stringify(out)).not.toContain('top-secret');
 		expect(JSON.stringify(out)).not.toContain('secret.example');
 	});
+
+	test('next_poll_eta_ms is null before first poll', () => {
+		const row = {
+			id: 'w1', chain: 'monero',
+			created_at_ms: 1000, expires_at_ms: 8_000,
+			cancelled: 0, dead: 0,
+			delivery_attempts: 0, delivery_count: 0,
+			last_polled_at_ms: null,
+			last_known_balance: null, last_delivered_balance: null
+		};
+		const out = buildWatchSummary(row, { nowMs: 4000, pollIntervalSec: 60 });
+		expect(out.next_poll_eta_ms).toBeNull();
+	});
 });
 
 describe('buildPrivateInfo', () => {
-	test('reflects paywall configuration + chain support', () => {
+	test('reflects paywall configuration + chain support + new fields', () => {
 		const info = buildPrivateInfo({
 			x402Cfg: {
 				enabled: true,
@@ -280,20 +441,27 @@ describe('buildPrivateInfo', () => {
 					'POST /v1/private/watch': { accepts: { price: '$0.10' } }
 				}
 			},
-			nfptHealth: { ok: true }
+			nfptHealth: { ok: true },
+			requireHttps: true
 		});
 		expect(info.chains).toEqual(['monero', 'zcash']);
 		expect(info.pricing.watch_creation).toBe('$0.10');
+		expect(info.pricing.duration_days).toBe(WATCH_CONSTANTS.FIXED_DURATION_DAYS);
+		expect(info.pricing.renewal).toMatch(/re-POST/);
 		expect(info.paywall_enabled).toBe(true);
+		expect(info.security.webhook_url_scheme).toBe('https only');
+		expect(info.security.webhook_ssrf_guard).toMatch(/DNS-resolved/);
 		expect(info.upstream).toEqual({ ok: true });
 	});
 
-	test('handles disabled paywall', () => {
+	test('handles disabled paywall + http allowed', () => {
 		const info = buildPrivateInfo({
 			x402Cfg: { enabled: false },
-			nfptHealth: { ok: false }
+			nfptHealth: { ok: false },
+			requireHttps: false
 		});
 		expect(info.pricing.watch_creation).toBeNull();
 		expect(info.paywall_enabled).toBe(false);
+		expect(info.security.webhook_url_scheme).toBe('http or https');
 	});
 });

@@ -159,6 +159,10 @@ export const config = Object.freeze({
 	// for local development. Production deployments leave this off so
 	// SSRF protection is in force.
 	privateWatchAllowPrivateWebhooks: asString('PRIVATE_WATCH_ALLOW_PRIVATE_WEBHOOKS', '') === '1',
+	// Require https:// for webhook URLs. Default ON in production so a
+	// cleartext token can't be sniffed off the wire. Local dev keeps it
+	// off to support testing against an http listener.
+	privateWatchRequireHttps: asString('PRIVATE_WATCH_REQUIRE_HTTPS', '1') === '1',
 	// How often the poller drives a tick. Each tick polls every active
 	// watch; NFPT detaches scanners after 5 min idle, so we stay
 	// comfortably below.
@@ -166,6 +170,14 @@ export const config = Object.freeze({
 	// HTTP timeout for outbound webhook POSTs. Set short — receivers
 	// should accept fast and process async.
 	privateWatchWebhookTimeoutMs: asInt('PRIVATE_WATCH_WEBHOOK_TIMEOUT_MS', 8_000),
+	// Cap on bytes drained from a webhook receiver's response body.
+	// We don't use the body — status code is the source of truth — so
+	// a 4 KB cap defeats slow-loris megabyte responses.
+	privateWatchResponseMaxBytes: asInt('PRIVATE_WATCH_RESPONSE_MAX_BYTES', 4 * 1024),
+	// Max active watches per source IP — keeps a single client from
+	// monopolising poller slots. Each is paywalled at $0.10 already
+	// so this is mostly a soft DoS guard.
+	privateWatchMaxPerIp: asInt('PRIVATE_WATCH_MAX_PER_IP', 32),
 	// x402 price for POST /v1/private/watch. One tier, $0.10 = 7-day
 	// monitor for one (chain, address, viewKey, webhookUrl). Override
 	// via env without touching code if we want a promo price.

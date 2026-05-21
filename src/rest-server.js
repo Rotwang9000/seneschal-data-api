@@ -66,11 +66,13 @@ import {
 	healthCheck as nfptHealthCheck
 } from './private-watch-nfpt.js';
 import {
-	validateWatchRequest,
+	resolveAndValidateWatchRequest,
 	buildWatchSummary,
 	buildPrivateInfo,
+	buildSyntheticTestBody,
 	WATCH_CONSTANTS
 } from './private-watch.js';
+import { deliverWebhook } from './private-watch-poller.js';
 
 const ONE_HOUR_MS = 60 * 60 * 1000;
 const ONE_DAY_MS = 24 * ONE_HOUR_MS;
@@ -192,7 +194,9 @@ export async function buildApp(options = {}) {
 			'POST /v1/private/watch (x402 paywall — view-key payment monitor)',
 			'GET /v1/private/watch/:id (owner-only, free poll)',
 			'DELETE /v1/private/watch/:id (owner-only, free cancel)',
-			'GET /v1/private/info (free service metadata)'
+			'POST /v1/private/watch/:id/test (owner-only, fires a synthetic webhook)',
+			'GET /v1/private/info (free service metadata)',
+			'GET /v1/private/health (free counters, no PII)'
 		],
 		paywall: paywallSummary
 	}));
@@ -290,6 +294,30 @@ export async function buildApp(options = {}) {
 		} catch (err) {
 			overview.income = { enabled: false, reason: `income read failed: ${err?.message ?? String(err)}` };
 			req.log.warn({ err: err?.message ?? String(err) }, 'income snapshot read failed');
+		}
+		// Private Watch live counters. We fold them into the overview
+		// so the dashboard doesn't need a second request and so the
+		// "no PII" health surface stays the only public source of
+		// these numbers. Wrapped in try/catch because a corrupt DB
+		// shouldn't take the whole stats page down.
+		try {
+			if (watchDb) {
+				const watchPrice = x402Cfg?.routes?.['POST /v1/private/watch']?.accepts?.price ?? null;
+				overview.private_watch = {
+					enabled: privateWatchReady(),
+					price: watchPrice,
+					duration_days: WATCH_CONSTANTS.FIXED_DURATION_DAYS,
+					poll_interval_sec: config.privateWatchPollIntervalSec,
+					stats: storeStatsSnapshot(watchDb)
+				};
+			}
+			else {
+				overview.private_watch = { enabled: false, reason: 'watch DB not opened' };
+			}
+		}
+		catch (err) {
+			overview.private_watch = { enabled: false, reason: `private-watch read failed: ${err?.message ?? String(err)}` };
+			req.log.warn({ err: err?.message ?? String(err) }, 'private-watch snapshot failed');
 		}
 		return overview;
 	});
@@ -513,6 +541,18 @@ export async function buildApp(options = {}) {
 	let watchDb = options.watchDb ?? null;
 	let watchMasterKey = options.watchMasterKey ?? null;
 	let nfptClient = options.nfptClient ?? null;
+	// `webhookResolver` is the dns.promises-compatible resolver used
+	// by resolveAndValidateWatchRequest. Tests inject a stub so the
+	// suite doesn't depend on real DNS for `example.com`. Production
+	// gets the default node:dns/promises resolver.
+	const webhookResolver = options.webhookResolver ?? undefined;
+	// HTTPS-only switch is config-driven by default but tests can
+	// flip it off without setting an env var.
+	const privateWatchRequireHttps = options.privateWatchRequireHttps
+		?? (config.privateWatchRequireHttps && !config.privateWatchAllowPrivateWebhooks);
+	// Fetch override used when delivering webhooks (the /test endpoint).
+	// Tests inject a stub; production uses globalThis.fetch.
+	const webhookFetchImpl = options.webhookFetchImpl ?? globalThis.fetch;
 	if (privateWatchEnabled && options.disablePrivateWatch !== true) {
 		try {
 			watchMasterKey = watchMasterKey ?? parseMasterKey(config.privateWatchEncryptionKey);
@@ -552,7 +592,11 @@ export async function buildApp(options = {}) {
 		const nfptHealth = privateWatchReady()
 			? await safeHealth(nfptClient)
 			: { ok: false, reason: 'private watch disabled' };
-		return buildPrivateInfo({ x402Cfg, nfptHealth });
+		return buildPrivateInfo({
+			x402Cfg,
+			nfptHealth,
+			requireHttps: privateWatchRequireHttps
+		});
 	});
 
 	app.get('/v1/private/health', async () => {
@@ -570,8 +614,10 @@ export async function buildApp(options = {}) {
 		}
 		let input;
 		try {
-			input = validateWatchRequest(req.body ?? {}, {
-				allowPrivateWebhooks: config.privateWatchAllowPrivateWebhooks
+			input = await resolveAndValidateWatchRequest(req.body ?? {}, {
+				allowPrivateWebhooks: config.privateWatchAllowPrivateWebhooks,
+				requireHttps: privateWatchRequireHttps,
+				resolver: webhookResolver
 			});
 		}
 		catch (err) {
@@ -616,8 +662,10 @@ export async function buildApp(options = {}) {
 			webhookSecret,
 			chain: input.chain,
 			address: input.address,
+			birthdayHeight: input.birthdayHeight,
 			expiresAt: new Date(created.expiresAt).toISOString(),
 			pollIntervalSec: WATCH_CONSTANTS.DEFAULT_POLL_INTERVAL_SEC,
+			testEndpoint: `/v1/private/watch/${created.id}/test`,
 			signatureHeader: 'X-Seneschal-Signature: sha256=<HMAC-SHA256(webhookSecret, body)>'
 		};
 	});
@@ -630,7 +678,7 @@ export async function buildApp(options = {}) {
 		if (row.error === 'forbidden') {
 			return reply.code(403).send({ error: { code: 'forbidden', message: 'watch token mismatch' } });
 		}
-		return buildWatchSummary(row);
+		return buildWatchSummary(row, { pollIntervalSec: config.privateWatchPollIntervalSec });
 	});
 
 	app.delete('/v1/private/watch/:id', async (req, reply) => {
@@ -639,6 +687,53 @@ export async function buildApp(options = {}) {
 		const ok = storeCancelWatch(watchDb, req.params.id, token);
 		if (!ok) return reply.code(404).send({ error: { code: 'not_found', message: 'watch not found or forbidden' } });
 		return { cancelled: true };
+	});
+
+	// Free synthetic-test endpoint: owner pings this once to verify
+	// their receiver's signature handling end-to-end before relying on
+	// real payments. We sign with the same key as a real webhook but
+	// stamp `event: "synthetic_test"` so well-behaved receivers can
+	// branch and avoid processing it as a real payment.
+	app.post('/v1/private/watch/:id/test', async (req, reply) => {
+		if (!privateWatchReady()) return privateNotConfigured(reply);
+		const token = req.headers['x-watch-token'];
+		const row = storeGetWatch(watchDb, req.params.id, token);
+		if (!row) return reply.code(404).send({ error: { code: 'not_found', message: 'watch not found' } });
+		if (row.error === 'forbidden') {
+			return reply.code(403).send({ error: { code: 'forbidden', message: 'watch token mismatch' } });
+		}
+		if (row.cancelled || row.dead) {
+			return reply.code(409).send({ error: { code: 'watch_inactive', message: 'watch is cancelled or dead; create a new one' } });
+		}
+		const body = buildSyntheticTestBody({
+			watchId: row.id,
+			chain: row.chain,
+			address: row.address,
+			nowMs: Date.now()
+		});
+		const result = await deliverWebhook({
+			url: row.webhook_url,
+			body,
+			secret: row.webhook_secret,
+			watchId: row.id,
+			fetchImpl: webhookFetchImpl,
+			timeoutMs: config.privateWatchWebhookTimeoutMs,
+			responseMaxBytes: config.privateWatchResponseMaxBytes
+		});
+		req.log.info({
+			watchId: row.id,
+			ok: result.ok,
+			status: result.status,
+			webhookHost: safeHost(row.webhook_url)
+		}, 'private-watch: synthetic test delivered');
+		const code = result.ok ? 200 : 502;
+		return reply.code(code).send({
+			delivered: result.ok,
+			status: result.status,
+			error: result.error,
+			signature_header: 'X-Seneschal-Signature: sha256=<HMAC-SHA256(webhookSecret, body)>',
+			event: 'synthetic_test'
+		});
 	});
 
 	// Public catalogue: free GET that lists every Penny Oracle
