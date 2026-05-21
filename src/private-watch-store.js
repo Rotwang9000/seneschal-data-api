@@ -37,6 +37,13 @@ CREATE TABLE IF NOT EXISTS private_watches (
 	expires_at_ms INTEGER NOT NULL,
 	created_at_ms INTEGER NOT NULL,
 
+	-- prepaid credit meter (all values atomic USDC; 1_000_000 = $1.00)
+	credit_atomic INTEGER DEFAULT 0,
+	credit_topups_atomic INTEGER DEFAULT 0,
+	credit_billed_atomic INTEGER DEFAULT 0,
+	credit_last_billed_ms INTEGER,
+	low_credit_warned INTEGER DEFAULT 0,
+
 	-- upstream NFPT job linkage (re-established lazily on poll if NULL/stale)
 	nfpt_job_id TEXT,
 	nfpt_job_token TEXT,
@@ -61,15 +68,19 @@ CREATE INDEX IF NOT EXISTS idx_watch_active
 CREATE INDEX IF NOT EXISTS idx_watch_poll
 	ON private_watches(last_polled_at_ms);
 `;
+// NOTE: the idx_watch_credit index is created AFTER migrations below
+// because on a pre-credit-meter DB the column doesn't yet exist when
+// WATCH_DDL runs, and even `CREATE INDEX IF NOT EXISTS` will throw if
+// the referenced column is missing.
 
 /**
  * Open (or create) the watch DB. Pass a `:memory:` path in tests.
  * The parent directory is created if absent so deployments don't
  * have to pre-mkdir the state dir.
  *
- * Idempotent schema migration: `last_delivered_event` was added in a
- * later revision. We ALTER TABLE … ADD COLUMN if the table already
- * exists without it, ignoring "duplicate column" errors so re-opens
+ * Idempotent schema migration: new columns are added in successive
+ * revisions. We ALTER TABLE … ADD COLUMN if the table already
+ * exists without them, ignoring "duplicate column" errors so re-opens
  * are a no-op.
  */
 export function openWatchDb(path) {
@@ -85,7 +96,18 @@ export function openWatchDb(path) {
 	db.pragma('synchronous = NORMAL');
 	db.pragma('foreign_keys = ON');
 	db.exec(WATCH_DDL);
+	// Migrations layered on top — order doesn't matter as each ADD is
+	// idempotent. Group them so the next maintainer can append.
 	addColumnIfMissing(db, 'private_watches', 'last_delivered_event', 'TEXT');
+	addColumnIfMissing(db, 'private_watches', 'credit_atomic', 'INTEGER DEFAULT 0');
+	addColumnIfMissing(db, 'private_watches', 'credit_topups_atomic', 'INTEGER DEFAULT 0');
+	addColumnIfMissing(db, 'private_watches', 'credit_billed_atomic', 'INTEGER DEFAULT 0');
+	addColumnIfMissing(db, 'private_watches', 'credit_last_billed_ms', 'INTEGER');
+	addColumnIfMissing(db, 'private_watches', 'low_credit_warned', 'INTEGER DEFAULT 0');
+	// Now that the credit columns exist (whether freshly created or
+	// freshly added by ALTER TABLE) we can safely add the lookup index.
+	try { db.exec('CREATE INDEX IF NOT EXISTS idx_watch_credit ON private_watches(credit_atomic)'); }
+	catch { /* defensive: ancient SQLite without IF NOT EXISTS for indices */ }
 	return db;
 }
 
@@ -124,6 +146,14 @@ function constantEqHex(a, b) {
  * Create a new watch row. Pure-input contract — the caller has
  * already done validation (chain, address shape, encrypted view key,
  * webhook URL safety, etc.) and just hands us the resolved values.
+ *
+ * `creditAtomic` is the starter credit (atomic USDC units). The
+ * caller passes the value that matches the paywall tier they just
+ * settled. We seed `credit_last_billed_ms = nowMs` so per-day
+ * billing starts ticking immediately.
+ *
+ * `expiresAt` is derived from credit + day-rate so the existing
+ * downstream readers (purgeExpired, listActiveWatches) keep working.
  */
 export function createWatch(db, params) {
 	const {
@@ -133,7 +163,9 @@ export function createWatch(db, params) {
 		webhookUrl,
 		webhookSecret,
 		birthdayHeight = null,
-		durationMs,
+		creditAtomic,
+		dayRateAtomic,
+		maxLifetimeMs = Number.MAX_SAFE_INTEGER,
 		nowMs = Date.now()
 	} = params;
 	if (!['monero', 'zcash'].includes(chain)) {
@@ -151,18 +183,23 @@ export function createWatch(db, params) {
 	if (typeof webhookSecret !== 'string' || webhookSecret.length === 0) {
 		throw new TypeError('createWatch: webhookSecret required');
 	}
-	if (!Number.isFinite(durationMs) || durationMs <= 0) {
-		throw new TypeError('createWatch: durationMs must be a positive number');
+	if (!Number.isInteger(creditAtomic) || creditAtomic <= 0) {
+		throw new TypeError('createWatch: creditAtomic must be a positive integer');
+	}
+	if (!Number.isInteger(dayRateAtomic) || dayRateAtomic <= 0) {
+		throw new TypeError('createWatch: dayRateAtomic must be a positive integer');
 	}
 	const { id, token } = newIdAndToken();
 	const tokenHash = sha256(Buffer.from(token, 'utf8'));
-	const expiresAt = nowMs + durationMs;
+	const naiveExpires = nowMs + Math.floor((creditAtomic * 86_400_000) / dayRateAtomic);
+	const expiresAt = Math.min(naiveExpires, nowMs + maxLifetimeMs);
 	db.prepare(`
 		INSERT INTO private_watches (
 			id, token_hash, chain, address, view_key_ct,
 			webhook_url, webhook_secret, birthday_height,
-			expires_at_ms, created_at_ms
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			expires_at_ms, created_at_ms,
+			credit_atomic, credit_topups_atomic, credit_last_billed_ms
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`).run(
 		id,
 		tokenHash,
@@ -173,9 +210,12 @@ export function createWatch(db, params) {
 		webhookSecret,
 		birthdayHeight,
 		expiresAt,
+		nowMs,
+		creditAtomic,
+		creditAtomic,
 		nowMs
 	);
-	return { id, token, expiresAt, createdAt: nowMs };
+	return { id, token, expiresAt, createdAt: nowMs, creditAtomic };
 }
 
 /**
@@ -210,10 +250,10 @@ export function cancelWatch(db, id, token) {
 }
 
 /**
- * Return all watches that are not cancelled, not dead, and not yet
- * expired. The poller drives off this list. Optional `staleAfterMs`
- * cap so the poller can re-check every watch every N seconds
- * regardless of when it last polled.
+ * Return all watches that are not cancelled, not dead, have a
+ * positive credit balance, and are not past their lifetime cap. The
+ * poller drives off this list, so once `credit_atomic` hits zero
+ * the watch goes silent until topped up.
  */
 export function listActiveWatches(db, { nowMs = Date.now() } = {}) {
 	return db.prepare(`
@@ -221,6 +261,7 @@ export function listActiveWatches(db, { nowMs = Date.now() } = {}) {
 		FROM private_watches
 		WHERE cancelled = 0
 		  AND dead = 0
+		  AND credit_atomic > 0
 		  AND expires_at_ms > ?
 		ORDER BY COALESCE(last_polled_at_ms, 0) ASC
 	`).all(nowMs);
@@ -245,7 +286,13 @@ export function updateWatchState(db, id, patch) {
 		'delivery_attempts',
 		'delivery_count',
 		'last_delivery_error',
-		'dead'
+		'dead',
+		'credit_atomic',
+		'credit_topups_atomic',
+		'credit_billed_atomic',
+		'credit_last_billed_ms',
+		'low_credit_warned',
+		'expires_at_ms'
 	]);
 	const cols = [];
 	const vals = [];
@@ -259,6 +306,53 @@ export function updateWatchState(db, id, patch) {
 	const sql = `UPDATE private_watches SET ${cols.join(', ')} WHERE id = ?`;
 	const info = db.prepare(sql).run(...vals);
 	return info.changes;
+}
+
+/**
+ * Apply a top-up to a watch in an atomic UPDATE. Returns
+ *   { ok: true, row }       on success (row is the post-update row)
+ *   { ok: false, reason }   if the watch is missing, the token doesn't
+ *                           match, or the watch is cancelled.
+ *
+ * Token validation is constant-time. We bump `low_credit_warned` to 0
+ * if the top-up clears the threshold so the warning can fire again
+ * next time the meter dips.
+ */
+export function topupWatch(db, id, token, {
+	creditAtomic,
+	dayRateAtomic,
+	lowThresholdAtomic,
+	maxLifetimeMs,
+	nowMs = Date.now()
+}) {
+	if (!Number.isInteger(creditAtomic) || creditAtomic <= 0) {
+		throw new TypeError('topupWatch: creditAtomic must be a positive integer');
+	}
+	if (!Number.isInteger(dayRateAtomic) || dayRateAtomic <= 0) {
+		throw new TypeError('topupWatch: dayRateAtomic must be a positive integer');
+	}
+	const got = getWatch(db, id, token);
+	if (!got) return { ok: false, reason: 'not_found' };
+	if (got.error === 'forbidden') return { ok: false, reason: 'forbidden' };
+	if (got.cancelled === 1) return { ok: false, reason: 'cancelled' };
+	const newCredit = Number(got.credit_atomic ?? 0) + creditAtomic;
+	const newTopups = Number(got.credit_topups_atomic ?? 0) + creditAtomic;
+	const naiveExpires = nowMs + Math.floor((newCredit * 86_400_000) / dayRateAtomic);
+	const cappedExpires = maxLifetimeMs && Number.isFinite(maxLifetimeMs)
+		? Math.min(naiveExpires, nowMs + maxLifetimeMs)
+		: naiveExpires;
+	const resetWarn = (typeof lowThresholdAtomic === 'number' && newCredit > lowThresholdAtomic) ? 0 : (got.low_credit_warned ?? 0);
+	db.prepare(`
+		UPDATE private_watches
+		SET credit_atomic = ?,
+		    credit_topups_atomic = ?,
+		    expires_at_ms = ?,
+		    low_credit_warned = ?,
+		    dead = CASE WHEN dead = 1 AND ? > 0 THEN 0 ELSE dead END
+		WHERE id = ?
+	`).run(newCredit, newTopups, cappedExpires, resetWarn, newCredit, id);
+	const updated = db.prepare('SELECT * FROM private_watches WHERE id = ?').get(id);
+	return { ok: true, row: updated };
 }
 
 /**
@@ -294,24 +388,34 @@ export function statsSnapshot(db, { nowMs = Date.now() } = {}) {
 	const counters = db.prepare(`
 		SELECT
 			COUNT(*) AS total,
-			SUM(CASE WHEN cancelled = 0 AND dead = 0 AND expires_at_ms > ? THEN 1 ELSE 0 END) AS active,
+			SUM(CASE WHEN cancelled = 0 AND dead = 0 AND credit_atomic > 0 AND expires_at_ms > ? THEN 1 ELSE 0 END) AS active,
 			SUM(CASE WHEN dead = 1 THEN 1 ELSE 0 END) AS dead,
+			SUM(CASE WHEN cancelled = 0 AND dead = 0 AND credit_atomic <= 0 THEN 1 ELSE 0 END) AS out_of_credit,
 			SUM(CASE WHEN expires_at_ms <= ? THEN 1 ELSE 0 END) AS expired,
 			SUM(CASE WHEN chain = 'monero' THEN 1 ELSE 0 END) AS monero,
 			SUM(CASE WHEN chain = 'zcash' THEN 1 ELSE 0 END) AS zcash,
-			SUM(delivery_count) AS total_deliveries
+			SUM(delivery_count) AS total_deliveries,
+			COALESCE(SUM(credit_atomic), 0) AS total_credit_atomic,
+			COALESCE(SUM(credit_topups_atomic), 0) AS total_topups_atomic,
+			COALESCE(SUM(credit_billed_atomic), 0) AS total_billed_atomic
 		FROM private_watches
 	`).get(nowMs, nowMs);
 	return {
 		total: counters.total ?? 0,
 		active: counters.active ?? 0,
 		dead: counters.dead ?? 0,
+		out_of_credit: counters.out_of_credit ?? 0,
 		expired: counters.expired ?? 0,
 		by_chain: {
 			monero: counters.monero ?? 0,
 			zcash: counters.zcash ?? 0
 		},
-		total_deliveries: counters.total_deliveries ?? 0
+		total_deliveries: counters.total_deliveries ?? 0,
+		credit: {
+			balance_atomic: String(counters.total_credit_atomic ?? 0),
+			topups_atomic: String(counters.total_topups_atomic ?? 0),
+			billed_atomic: String(counters.total_billed_atomic ?? 0)
+		}
 	};
 }
 

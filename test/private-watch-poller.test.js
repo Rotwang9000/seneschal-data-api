@@ -22,6 +22,7 @@ import {
 } from '../src/private-watch-crypto.js';
 import { createNfptClient } from '../src/private-watch-nfpt.js';
 import { runPollerTick, deliverWebhook } from '../src/private-watch-poller.js';
+import { WATCH_CONSTANTS } from '../src/private-watch.js';
 
 const MASTER_KEY_HEX = '00'.repeat(32);
 const MASTER_KEY = parseMasterKey(MASTER_KEY_HEX);
@@ -38,7 +39,7 @@ beforeEach(() => {
 	webhookEvents.length = 0;
 });
 
-function makeMoneroWatch({ webhookUrl = 'https://example.com/hook' } = {}) {
+function makeMoneroWatch({ webhookUrl = 'https://example.com/hook', creditAtomic = WATCH_CONSTANTS.STARTER_CREDIT_ATOMIC, nowMs = NOW } = {}) {
 	const ct = encryptViewKey(XMR_VK, MASTER_KEY);
 	return createWatch(db, {
 		chain: 'monero',
@@ -46,8 +47,10 @@ function makeMoneroWatch({ webhookUrl = 'https://example.com/hook' } = {}) {
 		viewKeyCiphertext: ct,
 		webhookUrl,
 		webhookSecret: '5e'.repeat(32),
-		durationMs: 7 * DAY,
-		nowMs: NOW
+		creditAtomic,
+		dayRateAtomic: WATCH_CONSTANTS.DAY_RATE_ATOMIC,
+		maxLifetimeMs: WATCH_CONSTANTS.MAX_WATCH_LIFETIME_MS,
+		nowMs
 	});
 }
 
@@ -300,5 +303,146 @@ describe('deliverWebhook', () => {
 		expect(r.ok).toBe(false);
 		expect(r.status).toBe(0);
 		expect(r.error).toMatch(/boom/);
+	});
+});
+
+describe('runPollerTick — credit billing', () => {
+	test('charges per-day on each tick and persists the new balance', async () => {
+		// Watch starts with 100_000 atomic credit; we advance the
+		// poller's clock by 1 day so per-day billing should subtract
+		// 20_000 (= DAY_RATE_ATOMIC) on the tick.
+		const w = makeMoneroWatch();
+		const responses = [
+			{ status: 202, body: { data: { jobId: 'J1', jobToken: 'T1' } } },
+			{ status: 200, body: { data: { job: {
+				status: 'completed',
+				progress: { scannedHeight: 1, chainHeight: 1, scanProgress: 1, percentComplete: 100 },
+				balance: { totalAtomic: '0' },
+				error: null
+			} } } }
+		];
+		const nfpt = stubNfpt(responses);
+		const s = await runPollerTick({
+			db, masterKey: MASTER_KEY,
+			nfptClient: nfpt.client,
+			fetchImpl: webhookCapture(),
+			now: () => NOW + DAY,
+			logger: { info: () => {}, warn: () => {}, error: () => {} }
+		});
+		// Day charge: 20_000. Call charge for the scan_complete
+		// webhook: 5_000. Both should be reflected in row + summary.
+		expect(s.credit_billed_atomic).toBe(25_000);
+		expect(s.webhooks_delivered).toBe(1);
+		const row = getWatch(db, w.id, w.token);
+		expect(row.credit_atomic).toBe(WATCH_CONSTANTS.STARTER_CREDIT_ATOMIC - 25_000);
+		expect(row.credit_billed_atomic).toBe(25_000);
+		// Webhook body carries the post-day-charge credit block.
+		const payload = JSON.parse(webhookEvents[0].init.body);
+		expect(payload.credit.remaining_atomic).toBe(String(WATCH_CONSTANTS.STARTER_CREDIT_ATOMIC - 20_000));
+		expect(payload.credit.billed_atomic).toBe('20000');
+	});
+
+	test('fires a one-shot low_credit warning when crossing threshold', async () => {
+		// Seed credit just above threshold (40_001). 1.001 days
+		// elapsed crosses the bound at the second tick.
+		const w = makeMoneroWatch({ creditAtomic: 50_000 });
+		const responses = [
+			{ status: 202, body: { data: { jobId: 'J1', jobToken: 'T1' } } },
+			{ status: 200, body: { data: { job: {
+				status: 'completed',
+				progress: { scannedHeight: 1, chainHeight: 1, scanProgress: 1, percentComplete: 100 },
+				balance: { totalAtomic: '0' },
+				error: null
+			} } } }
+		];
+		const nfpt = stubNfpt(responses);
+		// Advance ~12 hours = $0.01 charge -> 50_000 - 10_000 = 40_000
+		// which equals threshold (≤). Should fire warning.
+		const s = await runPollerTick({
+			db, masterKey: MASTER_KEY,
+			nfptClient: nfpt.client,
+			fetchImpl: webhookCapture(),
+			now: () => NOW + DAY / 2,
+			logger: { info: () => {}, warn: () => {}, error: () => {} }
+		});
+		expect(s.low_credit_warnings).toBe(1);
+		// First webhook should be the low_credit warning, then the
+		// scan_complete (different events).
+		const events = webhookEvents.map(e => JSON.parse(e.init.body).event);
+		expect(events[0]).toBe('low_credit');
+		expect(events).toContain('scan_complete');
+		const row = getWatch(db, w.id, w.token);
+		expect(row.low_credit_warned).toBe(1);
+
+		// Reset; next tick another 12h elapse -> already warned,
+		// should NOT fire another low_credit.
+		webhookEvents.length = 0;
+		const nfpt2 = stubNfpt([
+			{ status: 200, body: { data: { job: {
+				status: 'completed',
+				progress: { scannedHeight: 2, chainHeight: 2, scanProgress: 1, percentComplete: 100 },
+				balance: { totalAtomic: '0' },
+				error: null
+			} } } }
+		]);
+		const s2 = await runPollerTick({
+			db, masterKey: MASTER_KEY,
+			nfptClient: nfpt2.client,
+			fetchImpl: webhookCapture(),
+			now: () => NOW + DAY,
+			logger: { info: () => {}, warn: () => {}, error: () => {} }
+		});
+		expect(s2.low_credit_warnings).toBe(0);
+		const events2 = webhookEvents.map(e => JSON.parse(e.init.body).event);
+		expect(events2).not.toContain('low_credit');
+	});
+
+	test('paused watches (credit_atomic = 0) are excluded by listActiveWatches', async () => {
+		// Manually zero a watch's credit to mimic the steady-state
+		// after burn (the meter math means day-charge can only ever
+		// drive credit to zero precisely as expires_at_ms ticks
+		// past now — the next tick's listActiveWatches filters the
+		// row out before pollOne sees it).
+		const w = makeMoneroWatch();
+		db.prepare('UPDATE private_watches SET credit_atomic = 0 WHERE id = ?').run(w.id);
+		const nfpt = stubNfpt([
+			{ status: 202, body: { data: { jobId: 'NOPE', jobToken: 'X' } } }
+		]);
+		const s = await runPollerTick({
+			db, masterKey: MASTER_KEY,
+			nfptClient: nfpt.client,
+			fetchImpl: webhookCapture(),
+			now: () => NOW + 1000,
+			logger: { info: () => {}, warn: () => {}, error: () => {} }
+		});
+		expect(s.watches_seen).toBe(0);
+		expect(s.jobs_started).toBe(0);
+		expect(nfpt.calls.length).toBe(0);
+	});
+
+	test('per-call charge is not applied when webhook delivery fails', async () => {
+		const w = makeMoneroWatch();
+		const nfpt = stubNfpt([
+			{ status: 202, body: { data: { jobId: 'J1', jobToken: 'T1' } } },
+			{ status: 200, body: { data: { job: {
+				status: 'completed',
+				progress: { scannedHeight: 1, chainHeight: 1, scanProgress: 1, percentComplete: 100 },
+				balance: { totalAtomic: '5' },
+				error: null
+			} } } }
+		]);
+		await runPollerTick({
+			db, masterKey: MASTER_KEY,
+			nfptClient: nfpt.client,
+			fetchImpl: webhookCapture({ ok: false }),
+			now: () => NOW + DAY,
+			logger: { info: () => {}, warn: () => {}, error: () => {} }
+		});
+		const row = getWatch(db, w.id, w.token);
+		// Day charge applied (20_000) but NOT the call charge (5_000)
+		// because the webhook returned 500.
+		expect(row.credit_atomic).toBe(WATCH_CONSTANTS.STARTER_CREDIT_ATOMIC - WATCH_CONSTANTS.DAY_RATE_ATOMIC);
+		expect(row.credit_billed_atomic).toBe(WATCH_CONSTANTS.DAY_RATE_ATOMIC);
+		expect(row.delivery_attempts).toBe(1);
 	});
 });

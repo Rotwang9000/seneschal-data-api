@@ -82,17 +82,51 @@ export const PREMIUM_ROUTES = Object.freeze([
 		mimeType: 'application/json',
 		priceEnvKey: 'X402_Q_PRICE'
 	})),
-	// Private watch — one POST creates a server-side payment monitor
-	// for an XMR/ZEC address using a view key. Priced higher than the
-	// Penny Oracle questions because each watch holds an NFPT scanner
-	// slot for the configured window and burns webhook deliveries.
+	// Private watch — paywalled creation + credit top-up + historical
+	// lookup. The watch itself runs on a credit meter (per-day +
+	// per-call rates set in private-watch.js); each route below
+	// settles the x402 fee then either creates a row or applies a
+	// credit increment to an existing row. Routes are explicit per
+	// price tier because @x402/fastify matches "METHOD /path"
+	// exactly — no path params, no query-based pricing.
 	Object.freeze({
 		method: 'POST',
 		path: '/v1/private/watch',
-		description: 'Subscribe a Monero or Zcash address to view-key-based payment monitoring. Body: { chain, address, viewKey, webhookUrl, durationDays?, birthdayHeight? }. Returns { watchId, watchToken, webhookSecret, expiresAt } — the receiver verifies inbound webhooks with HMAC-SHA256(webhookSecret, body).',
+		description: 'Create a Monero or Zcash view-key payment watch. Body: { chain, address, viewKey, webhookUrl, birthdayHeight? }. Returns { watchId, watchToken, webhookSecret, expiresAt, creditAtomic } — the receiver verifies inbound webhooks with HMAC-SHA256(webhookSecret, body) and tops up via /v1/private/topup* before the meter runs dry.',
 		mimeType: 'application/json',
 		priceEnvKey: 'X402_PRIVATE_WATCH_PRICE'
+	}),
+	Object.freeze({
+		method: 'POST',
+		path: '/v1/private/topup',
+		description: 'Add $0.10 of credit (100_000 atomic USDC) to an existing watch. Body: { watchId, watchToken }. Returns the post-top-up credit block.',
+		mimeType: 'application/json',
+		priceEnvKey: 'X402_PRIVATE_TOPUP_PRICE'
+	}),
+	Object.freeze({
+		method: 'POST',
+		path: '/v1/private/topup-1',
+		description: 'Add $1.00 of credit (1_000_000 atomic USDC) to an existing watch. Same body/response shape as /v1/private/topup.',
+		mimeType: 'application/json',
+		priceEnvKey: 'X402_PRIVATE_TOPUP_1_PRICE'
+	}),
+	Object.freeze({
+		method: 'POST',
+		path: '/v1/private/topup-5',
+		description: 'Add $5.00 of credit (5_000_000 atomic USDC) to an existing watch. Best value tier for high-volume receivers. Same body/response shape as /v1/private/topup.',
+		mimeType: 'application/json',
+		priceEnvKey: 'X402_PRIVATE_TOPUP_5_PRICE'
+	}),
+	Object.freeze({
+		method: 'POST',
+		path: '/v1/private/historical',
+		description: 'One-off historical scan of a Zcash UFVK or Monero address+viewKey. Returns spendable + spent note totals and (optional) per-note breakdown. The view key streams to NFPT in-memory only — nothing is persisted to our DB. Body: { chain, address, viewKey, birthdayHeight?, toHeight?, includeNotes? }.',
+		mimeType: 'application/json',
+		priceEnvKey: 'X402_PRIVATE_HISTORICAL_PRICE'
 	})
+	// POST /v1/private/derive-viewkey is intentionally FREE — it's
+	// rate-limited per-IP at the handler level. Excluded from
+	// PREMIUM_ROUTES so x402 doesn't try to gate it.
 ]);
 
 /**

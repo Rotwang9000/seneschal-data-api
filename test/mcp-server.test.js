@@ -97,7 +97,10 @@ describe('in-process tool surface', () => {
 			'seneschal_premium_builder_stats',
 			'seneschal_premium_opportunities',
 			'seneschal_private_watch_create',
+			'seneschal_private_watch_derive_viewkey',
+			'seneschal_private_watch_historical',
 			'seneschal_private_watch_info',
+			'seneschal_private_watch_topup',
 			'seneschal_q',
 			'seneschal_recent_liquidations',
 			'seneschal_stats_overview'

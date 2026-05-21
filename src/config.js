@@ -178,10 +178,28 @@ export const config = Object.freeze({
 	// monopolising poller slots. Each is paywalled at $0.10 already
 	// so this is mostly a soft DoS guard.
 	privateWatchMaxPerIp: asInt('PRIVATE_WATCH_MAX_PER_IP', 32),
-	// x402 price for POST /v1/private/watch. One tier, $0.10 = 7-day
-	// monitor for one (chain, address, viewKey, webhookUrl). Override
-	// via env without touching code if we want a promo price.
-	x402PrivateWatchPrice: asString('X402_PRIVATE_WATCH_PRICE', '$0.10')
+	// x402 price for POST /v1/private/watch. Buys the watch + the
+	// STARTER_CREDIT_ATOMIC ($0.10 = 100_000 atomic USDC) opening
+	// credit. Override via env for promos. The actual per-day +
+	// per-call rates live in private-watch.js (WATCH_CONSTANTS) so
+	// the meter logic is testable without env wiring.
+	x402PrivateWatchPrice: asString('X402_PRIVATE_WATCH_PRICE', '$0.10'),
+	// Three top-up tiers — same single-shot payment, larger
+	// credit increments. The handler dispatches off the route path
+	// to figure out how much credit to apply (TOPUP_10C_ATOMIC,
+	// TOPUP_1_ATOMIC, TOPUP_5_ATOMIC).
+	x402PrivateTopupPrice: asString('X402_PRIVATE_TOPUP_PRICE', '$0.10'),
+	x402PrivateTopup1Price: asString('X402_PRIVATE_TOPUP_1_PRICE', '$1.00'),
+	x402PrivateTopup5Price: asString('X402_PRIVATE_TOPUP_5_PRICE', '$5.00'),
+	// Historical lookup: one-off scan, returns the spendable + spent
+	// note breakdown for a view key without persisting anything. View
+	// key flows through to NFPT in memory only.
+	x402PrivateHistoricalPrice: asString('X402_PRIVATE_HISTORICAL_PRICE', '$0.50'),
+	// Rate-limit budget for the FREE derive-viewkey endpoint. Stops
+	// someone using us as a free seed-grinder. 6 calls / IP / minute
+	// is enough for a developer iterating, way too slow for
+	// brute-force.
+	privateWatchDerivePerIpPerMin: asInt('PRIVATE_WATCH_DERIVE_PER_IP_PER_MIN', 6)
 });
 
 export default config;

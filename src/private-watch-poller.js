@@ -41,6 +41,9 @@ import {
 import {
 	diffBalance,
 	buildWebhookBody,
+	buildLowCreditBody,
+	applyDayCharge,
+	applyCallCharge,
 	WATCH_CONSTANTS
 } from './private-watch.js';
 
@@ -88,10 +91,13 @@ export async function runPollerTick(deps) {
 		watches_seen: 0,
 		watches_polled: 0,
 		watches_dead: 0,
+		watches_out_of_credit: 0,
 		jobs_started: 0,
 		webhooks_attempted: 0,
 		webhooks_delivered: 0,
 		webhooks_failed: 0,
+		low_credit_warnings: 0,
+		credit_billed_atomic: 0,
 		watches_skipped: 0,
 		errors: []
 	};
@@ -122,6 +128,56 @@ export async function runPollerTick(deps) {
 }
 
 async function pollOne({ row, db, masterKey, nfptClient, fetchImpl, webhookTimeoutMs, responseMaxBytes, logger, now, summary }) {
+	const tickStartMs = now();
+
+	// 1) Per-day billing. Always applied first so the credit block
+	//    we emit later reflects the live meter. The patch may charge
+	//    zero atomic units if not enough time has elapsed since the
+	//    last bill — in that case we leave the row untouched.
+	const dayPatch = applyDayCharge(row, tickStartMs);
+	if (dayPatch.chargeAtomic > 0) {
+		updateWatchState(db, row.id, {
+			credit_atomic: dayPatch.credit_atomic,
+			credit_billed_atomic: dayPatch.credit_billed_atomic,
+			credit_last_billed_ms: dayPatch.credit_last_billed_ms,
+			expires_at_ms: dayPatch.expires_at_ms
+		});
+		// Reflect the charge on the in-memory row so subsequent
+		// steps (low-credit check, webhook body) see fresh values.
+		row.credit_atomic = dayPatch.credit_atomic;
+		row.credit_billed_atomic = dayPatch.credit_billed_atomic;
+		row.credit_last_billed_ms = dayPatch.credit_last_billed_ms;
+		row.expires_at_ms = dayPatch.expires_at_ms;
+		summary.credit_billed_atomic += dayPatch.chargeAtomic;
+	}
+
+	// 2) Low-credit warning. One-shot: we fire exactly once per
+	//    threshold-crossing. Top-ups reset `low_credit_warned` so a
+	//    user who tops up and then runs down again gets a fresh
+	//    warning. Deliberately not charged as a regular call — this
+	//    is a service-driven courtesy notification.
+	if (Number(row.credit_atomic ?? 0) <= WATCH_CONSTANTS.LOW_CREDIT_THRESHOLD_ATOMIC
+		&& Number(row.low_credit_warned ?? 0) === 0
+		&& Number(row.credit_atomic ?? 0) > 0) {
+		const fired = await maybeFireLowCredit({
+			row, db, fetchImpl, webhookTimeoutMs, responseMaxBytes,
+			nowMs: tickStartMs, logger
+		});
+		if (fired) {
+			summary.low_credit_warnings += 1;
+			row.low_credit_warned = 1;
+		}
+	}
+
+	// 3) If we've run out of credit (day-charge took us to zero), skip
+	//    the NFPT poll. The watch will not appear in listActiveWatches
+	//    on the next tick until the receiver tops up.
+	if (Number(row.credit_atomic ?? 0) <= 0) {
+		summary.watches_out_of_credit += 1;
+		updateWatchState(db, row.id, { last_polled_at_ms: tickStartMs });
+		return;
+	}
+
 	const viewKey = decryptViewKey(row.view_key_ct, masterKey);
 	let jobId = row.nfpt_job_id;
 	let jobToken = row.nfpt_job_token;
@@ -182,6 +238,7 @@ async function pollOne({ row, db, masterKey, nfptClient, fetchImpl, webhookTimeo
 		before,
 		after: snapshot,
 		diff,
+		row,
 		nowMs
 	});
 	const result = await deliverWebhook({
@@ -200,19 +257,30 @@ async function pollOne({ row, db, masterKey, nfptClient, fetchImpl, webhookTimeo
 			: diff.balance_changed
 				? 'balance_change'
 				: 'status_change';
+		// 4) Per-call billing. Burns CALL_RATE_ATOMIC. May take credit
+		//    to zero — the watch silently pauses next tick.
+		const callPatch = applyCallCharge(row, nowMs);
 		updateWatchState(db, row.id, {
 			last_delivered_balance: knownJson,
 			last_delivered_at_ms: nowMs,
 			last_delivered_event: eventLabel,
 			delivery_attempts: 0,
 			delivery_count: (row.delivery_count ?? 0) + 1,
-			last_delivery_error: null
+			last_delivery_error: null,
+			credit_atomic: callPatch.credit_atomic,
+			credit_billed_atomic: callPatch.credit_billed_atomic,
+			expires_at_ms: callPatch.expires_at_ms
 		});
+		row.credit_atomic = callPatch.credit_atomic;
+		row.credit_billed_atomic = callPatch.credit_billed_atomic;
+		row.expires_at_ms = callPatch.expires_at_ms;
+		summary.credit_billed_atomic += callPatch.chargeAtomic;
 		logger.info?.({
 			watchId: row.id,
 			chain: row.chain,
 			status: result.status,
-			delta: diff.delta_atomic
+			delta: diff.delta_atomic,
+			credit_remaining_atomic: row.credit_atomic
 		}, 'private-watch: webhook delivered');
 	}
 	else {
@@ -233,6 +301,49 @@ async function pollOne({ row, db, masterKey, nfptClient, fetchImpl, webhookTimeo
 			err: result.error
 		}, dead ? 'private-watch: webhook dead-letter' : 'private-watch: webhook failed');
 	}
+}
+
+/**
+ * Send a low-credit warning webhook. Always attempts delivery; on
+ * success we mark `low_credit_warned = 1` so it doesn't repeat. On
+ * failure we silently leave the flag at 0 — the next tick will retry,
+ * which is fine for this kind of soft notification.
+ *
+ * Returns true if the webhook was successfully delivered.
+ */
+async function maybeFireLowCredit({ row, db, fetchImpl, webhookTimeoutMs, responseMaxBytes, nowMs, logger }) {
+	const body = buildLowCreditBody({
+		watchId: row.id,
+		chain: row.chain,
+		address: row.address,
+		row,
+		nowMs
+	});
+	const result = await deliverWebhook({
+		url: row.webhook_url,
+		body,
+		secret: row.webhook_secret,
+		watchId: row.id,
+		fetchImpl,
+		timeoutMs: webhookTimeoutMs,
+		responseMaxBytes
+	});
+	if (!result.ok) {
+		logger.warn?.({
+			watchId: row.id,
+			chain: row.chain,
+			status: result.status,
+			err: result.error
+		}, 'private-watch: low-credit warning failed');
+		return false;
+	}
+	updateWatchState(db, row.id, { low_credit_warned: 1 });
+	logger.info?.({
+		watchId: row.id,
+		chain: row.chain,
+		credit_remaining_atomic: row.credit_atomic
+	}, 'private-watch: low-credit warning delivered');
+	return true;
 }
 
 async function startJobForRow({ row, viewKey, nfptClient }) {

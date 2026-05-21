@@ -54,6 +54,7 @@ import {
 	createWatch as storeCreateWatch,
 	getWatch as storeGetWatch,
 	cancelWatch as storeCancelWatch,
+	topupWatch as storeTopupWatch,
 	statsSnapshot as storeStatsSnapshot
 } from './private-watch-store.js';
 import {
@@ -63,12 +64,18 @@ import {
 } from './private-watch-crypto.js';
 import {
 	createNfptClient,
-	healthCheck as nfptHealthCheck
+	healthCheck as nfptHealthCheck,
+	scanHistorical,
+	deriveUfvk
 } from './private-watch-nfpt.js';
 import {
 	resolveAndValidateWatchRequest,
+	validateTopupRequest,
+	validateHistoricalRequest,
+	validateDeriveRequest,
 	buildWatchSummary,
 	buildPrivateInfo,
+	buildCreditBlock,
 	buildSyntheticTestBody,
 	WATCH_CONSTANTS
 } from './private-watch.js';
@@ -191,7 +198,12 @@ export async function buildApp(options = {}) {
 			'GET /v1/q/* (penny-oracle atomic-fact endpoints, x402 paywall)',
 			'GET /v1/q/xmr/* (Monero atomic-fact endpoints, x402 paywall)',
 			'GET /v1/q/zec/* (Zcash atomic-fact endpoints, x402 paywall)',
-			'POST /v1/private/watch (x402 paywall — view-key payment monitor)',
+			'POST /v1/private/watch (x402 paywall — view-key payment monitor, starter credit)',
+			'POST /v1/private/topup (x402 paywall — $0.10 credit top-up)',
+			'POST /v1/private/topup-1 (x402 paywall — $1.00 credit top-up)',
+			'POST /v1/private/topup-5 (x402 paywall — $5.00 credit top-up)',
+			'POST /v1/private/historical (x402 paywall — one-off spendable+spent note scan)',
+			'POST /v1/private/derive-viewkey (free, rate-limited — Zcash UFVK from BIP-39 mnemonic)',
 			'GET /v1/private/watch/:id (owner-only, free poll)',
 			'DELETE /v1/private/watch/:id (owner-only, free cancel)',
 			'POST /v1/private/watch/:id/test (owner-only, fires a synthetic webhook)',
@@ -302,11 +314,17 @@ export async function buildApp(options = {}) {
 		// shouldn't take the whole stats page down.
 		try {
 			if (watchDb) {
-				const watchPrice = x402Cfg?.routes?.['POST /v1/private/watch']?.accepts?.price ?? null;
+				const routes = x402Cfg?.routes ?? {};
 				overview.private_watch = {
 					enabled: privateWatchReady(),
-					price: watchPrice,
-					duration_days: WATCH_CONSTANTS.FIXED_DURATION_DAYS,
+					price_create: routes['POST /v1/private/watch']?.accepts?.price ?? null,
+					price_topup_10c: routes['POST /v1/private/topup']?.accepts?.price ?? null,
+					price_topup_1: routes['POST /v1/private/topup-1']?.accepts?.price ?? null,
+					price_topup_5: routes['POST /v1/private/topup-5']?.accepts?.price ?? null,
+					price_historical: routes['POST /v1/private/historical']?.accepts?.price ?? null,
+					rate_per_day_atomic: String(WATCH_CONSTANTS.DAY_RATE_ATOMIC),
+					rate_per_call_atomic: String(WATCH_CONSTANTS.CALL_RATE_ATOMIC),
+					low_credit_threshold_atomic: String(WATCH_CONSTANTS.LOW_CREDIT_THRESHOLD_ATOMIC),
 					poll_interval_sec: config.privateWatchPollIntervalSec,
 					stats: storeStatsSnapshot(watchDb)
 				};
@@ -647,14 +665,16 @@ export async function buildApp(options = {}) {
 			webhookUrl: input.webhookUrl,
 			webhookSecret,
 			birthdayHeight: input.birthdayHeight,
-			durationMs: input.durationMs,
+			creditAtomic: WATCH_CONSTANTS.STARTER_CREDIT_ATOMIC,
+			dayRateAtomic: WATCH_CONSTANTS.DAY_RATE_ATOMIC,
+			maxLifetimeMs: WATCH_CONSTANTS.MAX_WATCH_LIFETIME_MS,
 			nowMs: input.now
 		});
 		req.log.info({
 			watchId: created.id,
 			chain: input.chain,
 			webhookHost: safeHost(input.webhookUrl),
-			durationDays: input.durationDays
+			creditAtomic: created.creditAtomic
 		}, 'private-watch: created');
 		return {
 			watchId: created.id,
@@ -663,11 +683,150 @@ export async function buildApp(options = {}) {
 			chain: input.chain,
 			address: input.address,
 			birthdayHeight: input.birthdayHeight,
+			creditAtomic: String(created.creditAtomic),
 			expiresAt: new Date(created.expiresAt).toISOString(),
 			pollIntervalSec: WATCH_CONSTANTS.DEFAULT_POLL_INTERVAL_SEC,
+			ratePerDayAtomic: String(WATCH_CONSTANTS.DAY_RATE_ATOMIC),
+			ratePerCallAtomic: String(WATCH_CONSTANTS.CALL_RATE_ATOMIC),
+			topupEndpoints: {
+				'10c': '/v1/private/topup',
+				'1usd': '/v1/private/topup-1',
+				'5usd': '/v1/private/topup-5'
+			},
 			testEndpoint: `/v1/private/watch/${created.id}/test`,
 			signatureHeader: 'X-Seneschal-Signature: sha256=<HMAC-SHA256(webhookSecret, body)>'
 		};
+	});
+
+	// Tiered top-up routes. All three share the same handler shape
+	// and the resolved `creditAtomic` is driven by the route path so
+	// the x402 paywall (which matches "METHOD /path" exactly) can
+	// gate each tier with its own price.
+	const TOPUP_TIERS = Object.freeze({
+		'/v1/private/topup':    WATCH_CONSTANTS.TOPUP_10C_ATOMIC,
+		'/v1/private/topup-1':  WATCH_CONSTANTS.TOPUP_1_ATOMIC,
+		'/v1/private/topup-5':  WATCH_CONSTANTS.TOPUP_5_ATOMIC
+	});
+
+	for (const [path, creditAtomic] of Object.entries(TOPUP_TIERS)) {
+		app.post(path, async (req, reply) => {
+			if (requirePaywall(reply)) return;
+			if (!privateWatchReady()) return privateNotConfigured(reply);
+			let body;
+			try { body = validateTopupRequest(req.body ?? {}); }
+			catch (err) {
+				return reply.code(400).send({ error: { code: 'invalid_request', message: err?.message ?? String(err) } });
+			}
+			const out = storeTopupWatch(watchDb, body.watchId, body.watchToken, {
+				creditAtomic,
+				dayRateAtomic: WATCH_CONSTANTS.DAY_RATE_ATOMIC,
+				lowThresholdAtomic: WATCH_CONSTANTS.LOW_CREDIT_THRESHOLD_ATOMIC,
+				maxLifetimeMs: WATCH_CONSTANTS.MAX_WATCH_LIFETIME_MS
+			});
+			if (!out.ok) {
+				const code = out.reason === 'forbidden' ? 403 : out.reason === 'not_found' ? 404 : 409;
+				return reply.code(code).send({ error: { code: out.reason, message: `top-up rejected: ${out.reason}` } });
+			}
+			req.log.info({
+				watchId: body.watchId,
+				tier: path,
+				creditAtomic,
+				newBalanceAtomic: out.row.credit_atomic
+			}, 'private-watch: topup applied');
+			return {
+				watchId: out.row.id,
+				tier: path,
+				creditAppliedAtomic: String(creditAtomic),
+				credit: buildCreditBlock(out.row),
+				expiresAt: new Date(out.row.expires_at_ms).toISOString()
+			};
+		});
+	}
+
+	// One-off historical scan. The view key is forwarded to NFPT in
+	// memory and never written to disk; the route returns the
+	// upstream's per-note breakdown so the receiver can reconcile
+	// against their on-chain wallet. The x402 paywall fixes the
+	// price (X402_PRIVATE_HISTORICAL_PRICE, default $0.50).
+	app.post('/v1/private/historical', async (req, reply) => {
+		if (requirePaywall(reply)) return;
+		if (!nfptClient) {
+			return reply.code(503).send({ error: { code: 'nfpt_not_configured', message: 'historical lookups require NFPT_BASE_URL' } });
+		}
+		let input;
+		try { input = validateHistoricalRequest(req.body ?? {}); }
+		catch (err) {
+			return reply.code(400).send({ error: { code: 'invalid_request', message: err?.message ?? String(err) } });
+		}
+		const health = await safeHealth(nfptClient);
+		if (!health?.ok) {
+			return reply.code(502).send({ error: { code: 'nfpt_upstream_unavailable', message: 'NFPT scanner unreachable', nfpt: health } });
+		}
+		const startedAt = Date.now();
+		let result;
+		try {
+			result = await scanHistorical(nfptClient, {
+				chain: input.chain,
+				address: input.address,
+				viewKey: input.viewKey,
+				birthdayHeight: input.birthdayHeight,
+				toHeight: input.toHeight,
+				includeNotes: input.includeNotes,
+				maxNotes: WATCH_CONSTANTS.HISTORICAL_MAX_NOTES
+			});
+		}
+		catch (err) {
+			req.log.warn({ err: err?.message ?? String(err) }, 'private-watch: historical scan failed');
+			return reply.code(502).send({ error: { code: 'historical_scan_failed', message: err?.message ?? String(err) } });
+		}
+		req.log.info({
+			chain: input.chain,
+			notes_returned: result?.notes?.length ?? 0,
+			elapsed_ms: Date.now() - startedAt
+		}, 'private-watch: historical scan complete');
+		return {
+			chain: input.chain,
+			address: input.address,
+			birthdayHeight: input.birthdayHeight,
+			toHeight: input.toHeight,
+			scanned_at_ms: startedAt,
+			elapsed_ms: Date.now() - startedAt,
+			...result,
+			view_key_handling: 'streamed to NFPT in memory only; not persisted to Seneschal DB or logs'
+		};
+	});
+
+	// FREE, rate-limited derive-viewkey endpoint. Forwards a BIP-39
+	// mnemonic to NFPT's orchard-scanner CLI and returns the UFVK
+	// the user would have to share with us to set up a watch. This
+	// is a CONVENIENCE, not a privacy guarantee — the phrase transits
+	// our process. The response reminds the caller of that loudly.
+	app.post('/v1/private/derive-viewkey', { config: { rateLimit: { max: config.privateWatchDerivePerIpPerMin ?? 6, timeWindow: '1 minute' } } }, async (req, reply) => {
+		if (!nfptClient) {
+			return reply.code(503).send({ error: { code: 'nfpt_not_configured', message: 'derive-viewkey requires NFPT_BASE_URL' } });
+		}
+		let input;
+		try { input = validateDeriveRequest(req.body ?? {}); }
+		catch (err) {
+			return reply.code(400).send({ error: { code: 'invalid_request', message: err?.message ?? String(err) } });
+		}
+		try {
+			const result = await deriveUfvk(nfptClient, { mnemonic: input.phrase, network: input.network });
+			req.log.info({ chain: input.chain, network: input.network, wordCount: input.wordCount }, 'private-watch: derive-viewkey ok');
+			return {
+				chain: input.chain,
+				network: input.network,
+				word_count: input.wordCount,
+				ufvk: result.ufvk,
+				sapling_fvk: result.sapling_fvk ?? null,
+				transparent_fvk: result.transparent_fvk ?? null,
+				WARNING: 'Your seed phrase transited our server over TLS. We do NOT log or persist it, but a network observer between you and us would have seen the bytes. For maximum safety, derive offline using the orchard-scanner binary on a trusted machine (see https://docs.seneschal.space/derive-locally). A UFVK is read-only and can ONLY observe incoming transactions; it cannot spend funds.'
+			};
+		}
+		catch (err) {
+			req.log.warn({ err: err?.message ?? String(err) }, 'private-watch: derive-viewkey failed');
+			return reply.code(502).send({ error: { code: 'derive_failed', message: err?.message ?? String(err) } });
+		}
 	});
 
 	app.get('/v1/private/watch/:id', async (req, reply) => {
@@ -709,6 +868,7 @@ export async function buildApp(options = {}) {
 			watchId: row.id,
 			chain: row.chain,
 			address: row.address,
+			row,
 			nowMs: Date.now()
 		});
 		const result = await deliverWebhook({

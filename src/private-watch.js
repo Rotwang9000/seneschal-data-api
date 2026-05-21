@@ -1,13 +1,24 @@
 // Private-watch business logic.
 //
-// The data-api speaks six surfaces around watches:
+// The data-api now speaks NINE surfaces around watches:
 //
-//   POST /v1/private/watch    — paywalled, creates a fixed 7-day watch
-//   GET  /v1/private/watch/:id  — owner-only, status + balance
-//   DELETE /v1/private/watch/:id — owner-only, cancels
-//   POST /v1/private/watch/:id/test — owner-only, fires a synthetic webhook
-//   GET  /v1/private/info     — free, lists prices + chain availability
-//   GET  /v1/private/health   — free, counters only (no PII)
+//   POST   /v1/private/watch                 — $0.10, creates a watch with starter credit
+//   GET    /v1/private/watch/:id             — owner-only, status + credit
+//   DELETE /v1/private/watch/:id             — owner-only, cancels
+//   POST   /v1/private/watch/:id/test        — owner-only, fires a synthetic webhook
+//   POST   /v1/private/topup                 — $0.10, adds 100_000 atomic credit
+//   POST   /v1/private/topup-1               — $1.00, adds 1_000_000 atomic credit
+//   POST   /v1/private/topup-5               — $5.00, adds 5_000_000 atomic credit
+//   POST   /v1/private/historical            — $0.50, one-off scan (notes returned, view key NOT stored)
+//   POST   /v1/private/derive-viewkey        — FREE (rate-limited), Zcash UFVK from BIP-39 mnemonic
+//   GET    /v1/private/info                  — free, lists prices + chains
+//   GET    /v1/private/health                — free, counters only (no PII)
+//
+// Watches use a prepaid credit meter (`credit_atomic` in atomic USDC),
+// debited per-day idle + per-webhook delivered. The receiver sees the
+// remaining balance + projected expiry on every webhook body. When
+// the meter crosses LOW_CREDIT_THRESHOLD_ATOMIC we fire one
+// `low_credit` webhook so the receiver can top up before it runs dry.
 //
 // Everything in this module is pure: it validates inputs, builds
 // records, and computes balance diffs. The side-effecty bits (DB
@@ -30,12 +41,34 @@ import { promises as dns } from 'node:dns';
 // ── Tunables ─────────────────────────────────────────────────────
 
 export const WATCH_CONSTANTS = Object.freeze({
-	// Fixed tier: $0.10 buys 7 days. We deliberately ignore any
-	// caller-supplied durationDays — variable pricing isn't supported
-	// by the x402 paywall and accepting "give me 30 days for the
-	// same $0.10" would just be giving stuff away. Multi-tier is a
-	// future enhancement (separate paths each with their own price).
-	FIXED_DURATION_DAYS: 7,
+	// Credit-based pricing. Watches hold a prepaid balance in atomic
+	// USDC units (1 USDC = 10^6 atomic). The poller debits per-day
+	// and per-call rates; when the balance dips below a threshold we
+	// fire a one-shot `low_credit` webhook so the receiver can top
+	// up before the meter hits zero. Round numbers chosen so the
+	// "$X.XX per day" maths is obvious to anyone reading the docs.
+	DAY_RATE_ATOMIC: 20_000,       // $0.02 / day idle
+	CALL_RATE_ATOMIC: 5_000,       // $0.005 / webhook delivered
+	// What a top-up tier buys, all in atomic USDC. The same constants
+	// are referenced by x402.js so the marketing copy and the
+	// settlement path can never drift.
+	TOPUP_10C_ATOMIC: 100_000,     // $0.10  → 5 idle days
+	TOPUP_1_ATOMIC: 1_000_000,     // $1.00  → 50 idle days
+	TOPUP_5_ATOMIC: 5_000_000,     // $5.00  → 250 idle days
+	// Starter credit attached to a fresh watch. Matches the $0.10
+	// creation paywall so the user gets exactly what they paid for
+	// the first time and can top up afterwards in any tier.
+	STARTER_CREDIT_ATOMIC: 100_000,
+	// Fire a `low_credit` webhook when remaining credit drops below
+	// this many atomic units. 40_000 = $0.04 = 2 idle days at the
+	// current DAY_RATE. Enough lead time for a top-up to land before
+	// the meter actually expires.
+	LOW_CREDIT_THRESHOLD_ATOMIC: 40_000,
+	// Historical lookup price (one-off, doesn't persist anything).
+	HISTORICAL_PRICE_ATOMIC: 500_000, // $0.50
+	// Hard cap on how many notes we'll return from a historical
+	// scan. Stops a huge wallet from returning a megabyte of JSON.
+	HISTORICAL_MAX_NOTES: 5_000,
 	// Poll cadence — NFPT detaches a scanner after 5 min idle, so we
 	// stay comfortably under that ceiling.
 	DEFAULT_POLL_INTERVAL_SEC: 180,
@@ -44,6 +77,10 @@ export const WATCH_CONSTANTS = Object.freeze({
 	// for a brief outage but short enough that a wrongly-configured
 	// receiver doesn't pin a poller slot forever.
 	MAX_DELIVERY_ATTEMPTS: 50,
+	// Maximum lifetime any single watch may hold credit for. Beyond
+	// this (~1 year) we'd rather the user re-create than have a row
+	// sit around for a decade. Tunable via env if anyone complains.
+	MAX_WATCH_LIFETIME_MS: 365 * 86_400_000,
 	// Schema bounds we sanity-check user input against.
 	XMR_VIEWKEY_HEX_LEN: 64,
 	XMR_ADDRESS_MIN_LEN: 90,
@@ -64,8 +101,29 @@ export const WATCH_CONSTANTS = Object.freeze({
 	// Zcash NU6 mainnet activation height. We use this as a sane
 	// default when a caller doesn't supply birthdayHeight so we
 	// don't accidentally trigger an autoDetect or full re-scan.
-	ZCASH_NU6_HEIGHT: 3_042_000
+	ZCASH_NU6_HEIGHT: 3_042_000,
+	// BIP-39 mnemonic word count expected by the NFPT scanner's
+	// `derive-ufvk` command. 24 words is Orchard-standard; 12-word
+	// seeds are flagged to the user with a "may not match your
+	// wallet" warning.
+	MNEMONIC_WORDS_ORCHARD: 24
 });
+
+// Derived helper: how many days of idle credit `remaining` buys at
+// the current rates. Returns a float so a UI can show "4.3 days".
+export function daysRemainingFromCredit(remainingAtomic, dayRateAtomic = WATCH_CONSTANTS.DAY_RATE_ATOMIC) {
+	if (remainingAtomic <= 0 || dayRateAtomic <= 0) return 0;
+	return remainingAtomic / dayRateAtomic;
+}
+
+// Format atomic USDC as a dollar string. Used in webhook bodies +
+// public summaries. 6 atomic units = 0.000006 USDC, so 4 decimal
+// places of precision is plenty.
+export function atomicToUsdString(atomic) {
+	const sign = atomic < 0 ? '-' : '';
+	const abs = Math.abs(Number(atomic));
+	return `${sign}${(abs / 1_000_000).toFixed(4).replace(/\.?0+$/u, '')}`;
+}
 
 // Hosts/IPs we won't deliver webhooks to. SSRF protection: agents
 // pass us their callback URL and we POST to it from inside our LAN.
@@ -137,35 +195,14 @@ function ipv4FromMappedIpv6(addr) {
 // ── Public surface ───────────────────────────────────────────────
 
 /**
- * Validate an inbound POST /v1/private/watch body. Returns the
- * normalised input on success or throws a TypeError on failure (which
- * the rest-server error handler converts to 400).
- *
- * Inputs:
- *   { chain, address, viewKey, webhookUrl, birthdayHeight? }
- *
- * Note that `durationDays` is deliberately NOT accepted from the
- * caller — at the current single-tier price ($0.10 → 7 days) we
- * always use FIXED_DURATION_DAYS. If we ever ship multi-tier we'll
- * do it via distinct paths, each with its own x402 price.
- *
- * `birthdayHeight` is honoured for BOTH chains. Without it:
- *   - Zcash defaults to ZCASH_NU6_HEIGHT (sane for wallets newer than
- *     April 2024) — avoids a multi-hour autoDetect.
- *   - Monero uses NFPT's default (scanner starts from current height
- *     and reports the existing balance immediately).
- *
- * Output:
- *   { chain, address, viewKey, webhookUrl, durationMs, durationDays,
- *     birthdayHeight, now }
+ * Validate the chain + key + address half of an inbound private-API
+ * request. Splitting this out lets the watch-creation, historical
+ * lookup, and derive-viewkey paths share the validation rules without
+ * accidentally drifting.
  */
-export function validateWatchRequest(body, {
-	now = Date.now(),
-	allowPrivateWebhooks = false,
-	requireHttps = false
-} = {}) {
+export function validateChainCredentials(body) {
 	if (!body || typeof body !== 'object') {
-		throw new TypeError('watch request body must be an object');
+		throw new TypeError('request body must be an object');
 	}
 	const chain = String(body.chain ?? '').toLowerCase();
 	if (!['monero', 'zcash'].includes(chain)) {
@@ -195,22 +232,6 @@ export function validateWatchRequest(body, {
 		}
 	}
 
-	const webhookUrl = String(body.webhookUrl ?? '').trim();
-	assertWebhookUrlSafe(webhookUrl, { allowPrivate: allowPrivateWebhooks, requireHttps });
-
-	// Reject any attempt to widen the duration past the paid tier.
-	// Quiet success on duplicates of the fixed value (lets clients
-	// document their intent without erroring).
-	if (body.durationDays !== undefined && body.durationDays !== null && body.durationDays !== '') {
-		const n = Number(body.durationDays);
-		if (!Number.isFinite(n) || n !== WATCH_CONSTANTS.FIXED_DURATION_DAYS) {
-			throw new TypeError(
-				`durationDays is fixed at ${WATCH_CONSTANTS.FIXED_DURATION_DAYS} for the current tier; do not supply, or pass exactly ${WATCH_CONSTANTS.FIXED_DURATION_DAYS}`
-			);
-		}
-	}
-	const durationDays = WATCH_CONSTANTS.FIXED_DURATION_DAYS;
-
 	let birthdayHeight = null;
 	if (body.birthdayHeight !== undefined && body.birthdayHeight !== null && body.birthdayHeight !== '') {
 		const h = Number(body.birthdayHeight);
@@ -219,23 +240,128 @@ export function validateWatchRequest(body, {
 		}
 		birthdayHeight = h;
 	}
-	// Zcash: default to NU6 so the scanner never trips into autoDetect.
-	// Most wallets are post-NU6 anyway; older ones can supply an
-	// explicit birthdayHeight.
 	if (chain === 'zcash' && birthdayHeight === null) {
+		// Default to NU6 — virtually all live wallets are post-April
+		// 2024. Older wallets supply an explicit birthdayHeight. This
+		// keeps us out of NFPT's multi-hour autoDetect path for a
+		// $0.10 watch (autoDetect is fine for the explicit historical
+		// route where the user expects to wait).
 		birthdayHeight = WATCH_CONSTANTS.ZCASH_NU6_HEIGHT;
 	}
+	return { chain, address, viewKey, birthdayHeight };
+}
 
+/**
+ * Validate an inbound POST /v1/private/watch body. Returns the
+ * normalised input on success or throws a TypeError on failure (which
+ * the rest-server error handler converts to 400).
+ *
+ * Inputs:
+ *   { chain, address, viewKey, webhookUrl, birthdayHeight? }
+ *
+ * Watches now use a credit-meter (`credit_atomic` debited per-day +
+ * per-call) rather than a fixed-duration tier. The caller pays the
+ * x402 fee, which credits the watch with `STARTER_CREDIT_ATOMIC`;
+ * subsequent top-ups go through the dedicated topup routes. We
+ * deliberately ignore any `durationDays` field in the body so a
+ * client that's read the old docs doesn't get confused.
+ *
+ * Output:
+ *   { chain, address, viewKey, webhookUrl, birthdayHeight, now }
+ */
+export function validateWatchRequest(body, {
+	now = Date.now(),
+	allowPrivateWebhooks = false,
+	requireHttps = false
+} = {}) {
+	const creds = validateChainCredentials(body);
+	const webhookUrl = String(body.webhookUrl ?? '').trim();
+	assertWebhookUrlSafe(webhookUrl, { allowPrivate: allowPrivateWebhooks, requireHttps });
+	// We silently ignore any `durationDays` field — old clients may
+	// send it. We refuse only if it's clearly nonsense (negative,
+	// non-numeric) so a typo in a copy-pasted snippet doesn't appear
+	// to be respected.
+	if (body.durationDays !== undefined && body.durationDays !== null && body.durationDays !== '') {
+		const n = Number(body.durationDays);
+		if (!Number.isFinite(n) || n <= 0) {
+			throw new TypeError('durationDays is deprecated; the watch runs on a credit meter — see /v1/private/info');
+		}
+	}
 	return Object.freeze({
-		chain,
-		address,
-		viewKey,
+		...creds,
 		webhookUrl,
-		durationDays,
-		durationMs: durationDays * 86_400_000,
-		birthdayHeight,
 		now
 	});
+}
+
+/**
+ * Validate a top-up body. Cheap structural check — the actual cost
+ * is set by the x402 paywall (one paid path per tier), so the handler
+ * passes us the resolved `creditAtomic` to apply.
+ */
+export function validateTopupRequest(body) {
+	if (!body || typeof body !== 'object') {
+		throw new TypeError('topup body must be an object');
+	}
+	const watchId = String(body.watchId ?? '').trim();
+	if (!/^[0-9a-f-]{36}$/u.test(watchId)) {
+		throw new TypeError('watchId must be a UUID');
+	}
+	const watchToken = String(body.watchToken ?? '').trim();
+	if (!watchToken) {
+		throw new TypeError('watchToken is required');
+	}
+	return Object.freeze({ watchId, watchToken });
+}
+
+/**
+ * Validate a historical-lookup body. Same chain credentials as a
+ * watch, plus optional `toHeight` and `includeNotes` flag (off by
+ * default — the summary numbers alone are usually enough).
+ */
+export function validateHistoricalRequest(body) {
+	const creds = validateChainCredentials(body);
+	let toHeight = null;
+	if (body.toHeight !== undefined && body.toHeight !== null && body.toHeight !== '') {
+		const h = Number(body.toHeight);
+		if (!Number.isInteger(h) || h < 0 || h > WATCH_CONSTANTS.MAX_BIRTHDAY_HEIGHT) {
+			throw new TypeError(`toHeight must be an integer in [0, ${WATCH_CONSTANTS.MAX_BIRTHDAY_HEIGHT}]`);
+		}
+		toHeight = h;
+	}
+	const includeNotes = body.includeNotes === true;
+	return Object.freeze({ ...creds, toHeight, includeNotes });
+}
+
+/**
+ * Validate a derive-viewkey body. The phrase length is bounded so a
+ * giant payload can't trip our backend, and we strip duplicate
+ * whitespace before forwarding to NFPT.
+ */
+export function validateDeriveRequest(body) {
+	if (!body || typeof body !== 'object') {
+		throw new TypeError('derive body must be an object');
+	}
+	const chain = String(body.chain ?? '').toLowerCase();
+	if (chain !== 'zcash') {
+		throw new TypeError(`chain '${chain}' not supported; derive-viewkey is currently Zcash (Orchard) only`);
+	}
+	const phrase = String(body.phrase ?? '').trim().replace(/\s+/gu, ' ');
+	if (!phrase) {
+		throw new TypeError('phrase is required (24-word BIP-39 mnemonic)');
+	}
+	if (phrase.length > 400) {
+		throw new TypeError('phrase exceeds 400 characters');
+	}
+	const words = phrase.split(' ');
+	if (words.length !== WATCH_CONSTANTS.MNEMONIC_WORDS_ORCHARD && words.length !== 12) {
+		throw new TypeError(`phrase must be a 12- or 24-word BIP-39 mnemonic (got ${words.length} words)`);
+	}
+	const network = String(body.network ?? 'mainnet').toLowerCase();
+	if (!['mainnet', 'testnet', 'regtest'].includes(network)) {
+		throw new TypeError(`network must be 'mainnet', 'testnet' or 'regtest'`);
+	}
+	return Object.freeze({ chain, phrase, network, wordCount: words.length });
 }
 
 /**
@@ -367,7 +493,7 @@ export function assertWebhookUrlSafe(webhookUrl, { allowPrivate = false, require
  * `event: "synthetic_test"` so receivers can branch and avoid
  * processing it as a real payment.
  */
-export function buildSyntheticTestBody({ watchId, chain, address, nowMs = Date.now() }) {
+export function buildSyntheticTestBody({ watchId, chain, address, row = null, nowMs = Date.now() }) {
 	return JSON.stringify({
 		watchId,
 		chain,
@@ -386,7 +512,8 @@ export function buildSyntheticTestBody({ watchId, chain, address, nowMs = Date.n
 			error: null,
 			note: 'synthetic test event from /v1/private/watch/:id/test'
 		},
-		delta: { balance_atomic: '0', before_atomic: '0', after_atomic: '0' }
+		delta: { balance_atomic: '0', before_atomic: '0', after_atomic: '0' },
+		credit: buildCreditBlock(row)
 	});
 }
 
@@ -431,11 +558,50 @@ export function diffBalance(before, after) {
 }
 
 /**
+ * Build a `credit` block summarising the watch's remaining prepaid
+ * balance and rates. We attach this to every webhook body so the
+ * receiver always knows the state of the meter without having to
+ * poll our REST API. Returns `null` if the input row is missing
+ * (e.g. synthetic test bodies handle their own framing).
+ */
+export function buildCreditBlock(row, {
+	dayRateAtomic = WATCH_CONSTANTS.DAY_RATE_ATOMIC,
+	callRateAtomic = WATCH_CONSTANTS.CALL_RATE_ATOMIC,
+	lowThresholdAtomic = WATCH_CONSTANTS.LOW_CREDIT_THRESHOLD_ATOMIC
+} = {}) {
+	if (!row) return null;
+	const remaining = Number.isFinite(Number(row.credit_atomic)) ? Number(row.credit_atomic) : 0;
+	const billed = Number.isFinite(Number(row.credit_billed_atomic)) ? Number(row.credit_billed_atomic) : 0;
+	const topups = Number.isFinite(Number(row.credit_topups_atomic)) ? Number(row.credit_topups_atomic) : 0;
+	const daysRemaining = daysRemainingFromCredit(remaining, dayRateAtomic);
+	return {
+		remaining_atomic: String(remaining),
+		remaining_usd: atomicToUsdString(remaining),
+		billed_atomic: String(billed),
+		billed_usd: atomicToUsdString(billed),
+		topups_atomic: String(topups),
+		topups_usd: atomicToUsdString(topups),
+		rate_per_day_atomic: String(dayRateAtomic),
+		rate_per_day_usd: atomicToUsdString(dayRateAtomic),
+		rate_per_call_atomic: String(callRateAtomic),
+		rate_per_call_usd: atomicToUsdString(callRateAtomic),
+		days_remaining_if_idle: Number(daysRemaining.toFixed(3)),
+		low_credit: remaining <= lowThresholdAtomic,
+		low_credit_threshold_atomic: String(lowThresholdAtomic),
+		low_credit_threshold_usd: atomicToUsdString(lowThresholdAtomic)
+	};
+}
+
+/**
  * Build the JSON body of a webhook delivery. The receiver verifies
  * `X-Seneschal-Signature: sha256=<hex>` against the exact body bytes,
  * so the caller must hand the returned string verbatim to fetch.
+ *
+ * The `row` argument is the post-debit watch row so the `credit`
+ * block reflects what the receiver actually has left AFTER this
+ * delivery has been billed.
  */
-export function buildWebhookBody({ watchId, chain, address, before, after, diff, nowMs = Date.now() }) {
+export function buildWebhookBody({ watchId, chain, address, before, after, diff, row = null, nowMs = Date.now() }) {
 	const payload = {
 		watchId,
 		chain,
@@ -453,7 +619,31 @@ export function buildWebhookBody({ watchId, chain, address, before, after, diff,
 			balance_atomic: diff.delta_atomic,
 			before_atomic: diff.before_atomic,
 			after_atomic: diff.after_atomic
-		}
+		},
+		credit: buildCreditBlock(row)
+	};
+	return JSON.stringify(payload);
+}
+
+/**
+ * Build a low_credit warning webhook body. Fired exactly once per
+ * threshold-crossing — see private-watch-poller.js where the
+ * `low_credit_warned` row flag is set after delivery. The body
+ * deliberately matches `buildWebhookBody`'s shape (same outer fields)
+ * so a receiver can ignore the unknown event type and still parse it.
+ */
+export function buildLowCreditBody({ watchId, chain, address, row, nowMs = Date.now() }) {
+	const payload = {
+		watchId,
+		chain,
+		address,
+		event: 'low_credit',
+		timestamp: new Date(nowMs).toISOString(),
+		nonce: `${nowMs.toString(36)}-low-${Math.floor(Math.random() * 1e9).toString(36)}`,
+		previous: null,
+		current: null,
+		delta: null,
+		credit: buildCreditBlock(row)
 	};
 	return JSON.stringify(payload);
 }
@@ -475,14 +665,25 @@ export function buildWatchSummary(row, { nowMs = Date.now(), pollIntervalSec = W
 	const nextPollEta = lastPolled
 		? Math.max(0, (lastPolled + pollIntervalSec * 1000) - nowMs)
 		: null;
+	const credit = buildCreditBlock(row);
+	const cancelled = row.cancelled === 1;
+	const dead = row.dead === 1;
+	const outOfCredit = !cancelled && !dead && Number(row.credit_atomic ?? 0) <= 0;
 	return {
 		watchId: row.id,
 		chain: row.chain,
 		created_at_ms: row.created_at_ms,
+		// `expires_at_ms` is now an upper bound: when the meter would
+		// hit zero at the current idle rate. Top-ups push it later;
+		// per-call billing nibbles at it. Clients still get a single
+		// timestamp to plan around.
 		expires_at_ms: row.expires_at_ms,
 		expires_in_ms: Math.max(0, row.expires_at_ms - nowMs),
-		cancelled: row.cancelled === 1,
-		dead: row.dead === 1,
+		state: cancelled ? 'cancelled' : dead ? 'dead' : outOfCredit ? 'out_of_credit' : 'active',
+		cancelled,
+		dead,
+		out_of_credit: outOfCredit,
+		credit,
 		last_polled_at_ms: lastPolled,
 		next_poll_eta_ms: nextPollEta,
 		last_delivered_at_ms: row.last_delivered_at_ms ?? null,
@@ -501,18 +702,44 @@ export function buildWatchSummary(row, { nowMs = Date.now(), pollIntervalSec = W
  * pull on the network from a pure function.
  */
 export function buildPrivateInfo({ x402Cfg, nfptHealth, requireHttps = false }) {
-	const watchPrice = x402Cfg?.routes?.['POST /v1/private/watch']?.accepts?.price ?? null;
+	const routes = x402Cfg?.routes ?? {};
+	const priceOf = (route) => routes[route]?.accepts?.price ?? null;
 	return {
 		service: 'Seneschal Private Watch',
-		spec: 'view-key based payment monitoring with webhook delivery',
+		spec: 'view-key based payment monitoring + on-demand historical lookups',
 		chains: ['monero', 'zcash'],
 		pricing: {
-			watch_creation: watchPrice,
-			duration_days: WATCH_CONSTANTS.FIXED_DURATION_DAYS,
-			renewal: 're-POST the same payload to extend; each call buys a fresh window'
+			model: 'prepaid credit meter (per-day idle rate + per-call delivery rate)',
+			rate_per_day_atomic: String(WATCH_CONSTANTS.DAY_RATE_ATOMIC),
+			rate_per_day_usd: atomicToUsdString(WATCH_CONSTANTS.DAY_RATE_ATOMIC),
+			rate_per_call_atomic: String(WATCH_CONSTANTS.CALL_RATE_ATOMIC),
+			rate_per_call_usd: atomicToUsdString(WATCH_CONSTANTS.CALL_RATE_ATOMIC),
+			low_credit_threshold_atomic: String(WATCH_CONSTANTS.LOW_CREDIT_THRESHOLD_ATOMIC),
+			low_credit_threshold_usd: atomicToUsdString(WATCH_CONSTANTS.LOW_CREDIT_THRESHOLD_ATOMIC),
+			starter_credit_atomic: String(WATCH_CONSTANTS.STARTER_CREDIT_ATOMIC),
+			starter_credit_usd: atomicToUsdString(WATCH_CONSTANTS.STARTER_CREDIT_ATOMIC),
+			watch_creation: priceOf('POST /v1/private/watch'),
+			topup_tiers: [
+				{ path: 'POST /v1/private/topup', price: priceOf('POST /v1/private/topup'), credit_atomic: String(WATCH_CONSTANTS.TOPUP_10C_ATOMIC) },
+				{ path: 'POST /v1/private/topup-1', price: priceOf('POST /v1/private/topup-1'), credit_atomic: String(WATCH_CONSTANTS.TOPUP_1_ATOMIC) },
+				{ path: 'POST /v1/private/topup-5', price: priceOf('POST /v1/private/topup-5'), credit_atomic: String(WATCH_CONSTANTS.TOPUP_5_ATOMIC) }
+			],
+			historical_lookup: {
+				path: 'POST /v1/private/historical',
+				price: priceOf('POST /v1/private/historical'),
+				returns: 'spendable_atomic + spent_atomic + total_received_atomic + (optional) per-note breakdown',
+				note: 'one-shot scan; view key NEVER persists in our DB'
+			},
+			derive_viewkey: {
+				path: 'POST /v1/private/derive-viewkey',
+				price: 'free (rate-limited)',
+				supported_chains: ['zcash'],
+				warning: 'transmits your seed phrase to our server in plaintext over TLS; we do not store it but a network-attacker between you and us would see it. For maximum safety derive offline using the orchard-scanner binary on a trusted machine.'
+			}
 		},
 		poll_interval_sec: WATCH_CONSTANTS.DEFAULT_POLL_INTERVAL_SEC,
 		max_delivery_attempts: WATCH_CONSTANTS.MAX_DELIVERY_ATTEMPTS,
+		max_watch_lifetime_days: Math.round(WATCH_CONSTANTS.MAX_WATCH_LIFETIME_MS / 86_400_000),
 		paywall_enabled: x402Cfg?.enabled === true,
 		upstream: nfptHealth,
 		security: {
@@ -520,8 +747,95 @@ export function buildPrivateInfo({ x402Cfg, nfptHealth, requireHttps = false }) 
 			webhook_signature: 'HMAC-SHA256 (per-watch secret in X-Seneschal-Signature: sha256=…)',
 			webhook_url_scheme: requireHttps ? 'https only' : 'http or https',
 			webhook_ssrf_guard: 'private IPv4/IPv6 ranges, loopback, link-local, RFC6598 CGNAT and cloud-metadata IPs are rejected at creation; the hostname is then DNS-resolved and the result re-checked',
-			view_key_permissions: 'view keys grant read-only visibility into incoming transactions; they CANNOT spend funds. Handing one to a third-party service does not put your balance at risk.'
+			view_key_permissions: 'view keys grant read-only visibility into incoming transactions; they CANNOT spend funds. Handing one to a third-party service does not put your balance at risk.',
+			historical_view_key_handling: 'historical lookups stream the view key through to NFPT in-memory only — never written to our SQLite or logs.'
 		}
+	};
+}
+
+/**
+ * Apply per-day billing to a watch row. Returns the patch to persist:
+ *   { credit_atomic, credit_billed_atomic, credit_last_billed_ms, expires_at_ms }
+ * `chargeAtomic` is the integer atomic amount we just deducted.
+ *
+ * The poller calls this whenever it polls (so partial-days are
+ * pro-rated), but the math is split out so it can be unit-tested
+ * without a database.
+ */
+export function applyDayCharge(row, nowMs, {
+	dayRateAtomic = WATCH_CONSTANTS.DAY_RATE_ATOMIC
+} = {}) {
+	const lastBilled = Number(row.credit_last_billed_ms ?? row.created_at_ms ?? nowMs);
+	const elapsedMs = Math.max(0, nowMs - lastBilled);
+	const chargeAtomic = Math.floor((elapsedMs * dayRateAtomic) / 86_400_000);
+	if (chargeAtomic <= 0) {
+		// Less than one atomic unit of cost has accrued; don't even
+		// bump the timestamp (so we keep accumulating precision until
+		// the next tick).
+		return { chargeAtomic: 0 };
+	}
+	const newCredit = Math.max(0, Number(row.credit_atomic ?? 0) - chargeAtomic);
+	const newBilled = Number(row.credit_billed_atomic ?? 0) + chargeAtomic;
+	const expiresAtMs = nowMs + Math.floor((newCredit * 86_400_000) / dayRateAtomic);
+	return {
+		chargeAtomic,
+		credit_atomic: newCredit,
+		credit_billed_atomic: newBilled,
+		credit_last_billed_ms: nowMs,
+		expires_at_ms: expiresAtMs
+	};
+}
+
+/**
+ * Apply a per-call charge after a webhook delivery. Returns the patch
+ * to persist:
+ *   { credit_atomic, credit_billed_atomic, expires_at_ms }
+ *
+ * Called by the poller right after a successful webhook fetch; we
+ * always burn the call charge even if the meter then dips below
+ * zero (the next tick will mark the watch out_of_credit).
+ */
+export function applyCallCharge(row, nowMs, {
+	callRateAtomic = WATCH_CONSTANTS.CALL_RATE_ATOMIC,
+	dayRateAtomic = WATCH_CONSTANTS.DAY_RATE_ATOMIC
+} = {}) {
+	const newCredit = Math.max(0, Number(row.credit_atomic ?? 0) - callRateAtomic);
+	const newBilled = Number(row.credit_billed_atomic ?? 0) + callRateAtomic;
+	const expiresAtMs = nowMs + Math.floor((newCredit * 86_400_000) / dayRateAtomic);
+	return {
+		chargeAtomic: callRateAtomic,
+		credit_atomic: newCredit,
+		credit_billed_atomic: newBilled,
+		expires_at_ms: expiresAtMs
+	};
+}
+
+/**
+ * Apply a top-up to a watch row. Returns the patch:
+ *   { credit_atomic, credit_topups_atomic, expires_at_ms, low_credit_warned }
+ *
+ * If the top-up pushes the meter back above the low-credit threshold
+ * we reset `low_credit_warned` so the next drop fires a fresh
+ * warning.
+ */
+export function applyTopup(row, creditAtomic, nowMs, {
+	dayRateAtomic = WATCH_CONSTANTS.DAY_RATE_ATOMIC,
+	lowThresholdAtomic = WATCH_CONSTANTS.LOW_CREDIT_THRESHOLD_ATOMIC,
+	maxLifetimeMs = WATCH_CONSTANTS.MAX_WATCH_LIFETIME_MS
+} = {}) {
+	if (!Number.isInteger(creditAtomic) || creditAtomic <= 0) {
+		throw new TypeError('creditAtomic must be a positive integer of atomic USDC units');
+	}
+	const newCredit = Number(row.credit_atomic ?? 0) + creditAtomic;
+	const newTopups = Number(row.credit_topups_atomic ?? 0) + creditAtomic;
+	const naiveExpires = nowMs + Math.floor((newCredit * 86_400_000) / dayRateAtomic);
+	const cappedExpires = Math.min(naiveExpires, nowMs + maxLifetimeMs);
+	const lowCreditReset = newCredit > lowThresholdAtomic ? 0 : (row.low_credit_warned ?? 0);
+	return {
+		credit_atomic: newCredit,
+		credit_topups_atomic: newTopups,
+		expires_at_ms: cappedExpires,
+		low_credit_warned: lowCreditReset
 	};
 }
 

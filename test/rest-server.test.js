@@ -703,6 +703,26 @@ describe('private watch routes', () => {
 						accepts: { scheme: 'exact', payTo: '0x1234567890abcdef1234567890abcdef12345678', price: '$0.10', network: 'eip155:8453', maxTimeoutSeconds: 120 },
 						description: 'private watch',
 						mimeType: 'application/json'
+					},
+					'POST /v1/private/topup': {
+						accepts: { scheme: 'exact', payTo: '0x1234567890abcdef1234567890abcdef12345678', price: '$0.10', network: 'eip155:8453', maxTimeoutSeconds: 120 },
+						description: 'topup 10c',
+						mimeType: 'application/json'
+					},
+					'POST /v1/private/topup-1': {
+						accepts: { scheme: 'exact', payTo: '0x1234567890abcdef1234567890abcdef12345678', price: '$1.00', network: 'eip155:8453', maxTimeoutSeconds: 120 },
+						description: 'topup 1usd',
+						mimeType: 'application/json'
+					},
+					'POST /v1/private/topup-5': {
+						accepts: { scheme: 'exact', payTo: '0x1234567890abcdef1234567890abcdef12345678', price: '$5.00', network: 'eip155:8453', maxTimeoutSeconds: 120 },
+						description: 'topup 5usd',
+						mimeType: 'application/json'
+					},
+					'POST /v1/private/historical': {
+						accepts: { scheme: 'exact', payTo: '0x1234567890abcdef1234567890abcdef12345678', price: '$0.50', network: 'eip155:8453', maxTimeoutSeconds: 120 },
+						description: 'historical',
+						mimeType: 'application/json'
 					}
 				}
 			}
@@ -792,7 +812,10 @@ describe('private watch routes', () => {
 		expect(r.json().error.message).toMatch(/(IPv6|not allowed)/);
 	});
 
-	test('POST /v1/private/watch rejects durationDays override (400)', async () => {
+	test('POST /v1/private/watch accepts (and ignores) positive durationDays for back-compat', async () => {
+		// Old clients may still pass `durationDays`; we silently
+		// ignore it because the meter is credit-driven. Negative /
+		// zero values are still rejected.
 		moneroIdx = 0;
 		const r = await appWatch.inject({
 			method: 'POST',
@@ -805,8 +828,27 @@ describe('private watch routes', () => {
 				durationDays: 30
 			}
 		});
+		expect(r.statusCode).toBe(200);
+		const body = r.json();
+		expect(body.creditAtomic).toBe('100000');
+		expect(body.ratePerDayAtomic).toBe('20000');
+	});
+
+	test('POST /v1/private/watch rejects negative durationDays (400)', async () => {
+		moneroIdx = 0;
+		const r = await appWatch.inject({
+			method: 'POST',
+			url: '/v1/private/watch',
+			payload: {
+				chain: 'monero',
+				address: '4' + 'A'.repeat(94),
+				viewKey: '5'.repeat(64),
+				webhookUrl: watchPort,
+				durationDays: -1
+			}
+		});
 		expect(r.statusCode).toBe(400);
-		expect(r.json().error.message).toMatch(/durationDays is fixed/);
+		expect(r.json().error.message).toMatch(/deprecated/);
 	});
 
 	test('POST /v1/private/watch rejects DNS-rebind to 127.0.0.1 (400)', async () => {
@@ -925,9 +967,165 @@ describe('private watch routes', () => {
 		const body = r.json();
 		expect(body.private_watch).toBeDefined();
 		expect(body.private_watch.enabled).toBe(true);
-		expect(body.private_watch.price).toBe('$0.10');
-		expect(body.private_watch.duration_days).toBe(7);
+		expect(body.private_watch.price_create).toBe('$0.10');
+		expect(body.private_watch.rate_per_day_atomic).toBe('20000');
+		expect(body.private_watch.rate_per_call_atomic).toBe('5000');
 		expect(body.private_watch.stats.by_chain).toBeDefined();
+		expect(body.private_watch.stats.credit).toBeDefined();
+	});
+
+	test('POST /v1/private/topup adds $0.10 credit and updates expires_at', async () => {
+		moneroIdx = 0;
+		const c = await appWatch.inject({
+			method: 'POST', url: '/v1/private/watch',
+			payload: { chain: 'monero', address: '4' + 'T'.repeat(94), viewKey: 'c'.repeat(64), webhookUrl: watchPort }
+		});
+		const { watchId, watchToken } = c.json();
+		const before = await appWatch.inject({
+			method: 'GET', url: `/v1/private/watch/${watchId}`,
+			headers: { 'x-watch-token': watchToken }
+		});
+		const beforeBody = before.json();
+		const r = await appWatch.inject({
+			method: 'POST', url: '/v1/private/topup',
+			payload: { watchId, watchToken }
+		});
+		expect(r.statusCode).toBe(200);
+		const body = r.json();
+		expect(body.tier).toBe('/v1/private/topup');
+		expect(body.creditAppliedAtomic).toBe('100000');
+		expect(body.credit.remaining_atomic).toBe(String(Number(beforeBody.credit.remaining_atomic) + 100_000));
+	});
+
+	test('POST /v1/private/topup-5 adds $5 credit', async () => {
+		moneroIdx = 0;
+		const c = await appWatch.inject({
+			method: 'POST', url: '/v1/private/watch',
+			payload: { chain: 'monero', address: '4' + 'U'.repeat(94), viewKey: 'd'.repeat(64), webhookUrl: watchPort }
+		});
+		const { watchId, watchToken } = c.json();
+		const r = await appWatch.inject({
+			method: 'POST', url: '/v1/private/topup-5',
+			payload: { watchId, watchToken }
+		});
+		expect(r.statusCode).toBe(200);
+		expect(r.json().creditAppliedAtomic).toBe('5000000');
+	});
+
+	test('POST /v1/private/topup with wrong token returns 403', async () => {
+		moneroIdx = 0;
+		const c = await appWatch.inject({
+			method: 'POST', url: '/v1/private/watch',
+			payload: { chain: 'monero', address: '4' + 'V'.repeat(94), viewKey: 'e'.repeat(64), webhookUrl: watchPort }
+		});
+		const { watchId } = c.json();
+		const r = await appWatch.inject({
+			method: 'POST', url: '/v1/private/topup',
+			payload: { watchId, watchToken: 'wrong' }
+		});
+		expect(r.statusCode).toBe(403);
+	});
+
+	test('POST /v1/private/topup with non-UUID watchId returns 400', async () => {
+		const r = await appWatch.inject({
+			method: 'POST', url: '/v1/private/topup',
+			payload: { watchId: 'nope', watchToken: 'x' }
+		});
+		expect(r.statusCode).toBe(400);
+		expect(r.json().error.message).toMatch(/UUID/);
+	});
+
+	test('POST /v1/private/historical returns totals from NFPT', async () => {
+		moneroIdx = 0;
+		const saved = scriptedMonero;
+		// Script: start-monero job, poll-completed (loop body),
+		// raw-job re-fetch, cancel.
+		scriptedMonero = [
+			{ status: 202, body: { success: true, data: { jobId: 'HJ1', jobToken: 'HT1' } } },
+			{ status: 200, body: { success: true, data: { job: {
+				status: 'completed',
+				progress: { scannedHeight: 100, chainHeight: 100, scanProgress: 1, percentComplete: 100, blocksScanned: 50_000 },
+				balance: { totalAtomic: '1234' },
+				transactions: [
+					{ amount: '1000', height: 50, txHash: 'aa', direction: 'in' },
+					{ amount: '234',  height: 90, txHash: 'bb', direction: 'in' }
+				],
+				error: null
+			} } } },
+			{ status: 200, body: { success: true, data: { job: {
+				status: 'completed',
+				progress: { scannedHeight: 100, chainHeight: 100, scanProgress: 1, percentComplete: 100, blocksScanned: 50_000 },
+				balance: { totalAtomic: '1234' },
+				transactions: [
+					{ amount: '1000', height: 50, txHash: 'aa', direction: 'in' },
+					{ amount: '234',  height: 90, txHash: 'bb', direction: 'in' }
+				],
+				error: null
+			} } } },
+			{ status: 200, body: { success: true } }
+		];
+		const r = await appWatch.inject({
+			method: 'POST', url: '/v1/private/historical',
+			payload: {
+				chain: 'monero',
+				address: '4' + 'H'.repeat(94),
+				viewKey: 'f'.repeat(64),
+				includeNotes: true
+			}
+		});
+		expect(r.statusCode).toBe(200);
+		const body = r.json();
+		expect(body.chain).toBe('monero');
+		expect(body.totals.received_atomic).toBe('1234');
+		expect(body.notes).toHaveLength(2);
+		expect(body.view_key_handling).toMatch(/in memory/);
+		scriptedMonero = saved;
+		moneroIdx = 0;
+	});
+
+	test('POST /v1/private/historical rejects malformed body (400)', async () => {
+		const r = await appWatch.inject({
+			method: 'POST', url: '/v1/private/historical',
+			payload: { chain: 'monero', address: 'too-short', viewKey: 'x' }
+		});
+		expect(r.statusCode).toBe(400);
+	});
+
+	test('POST /v1/private/derive-viewkey forwards to NFPT and returns UFVK', async () => {
+		moneroIdx = 0;
+		const saved = scriptedMonero;
+		scriptedMonero = [
+			{ status: 200, body: { success: true, data: { ufvk: 'uview1abc', sapling_fvk: null, transparent_fvk: null } } }
+		];
+		const phrase = Array(24).fill('abandon').join(' ');
+		const r = await appWatch.inject({
+			method: 'POST', url: '/v1/private/derive-viewkey',
+			payload: { chain: 'zcash', phrase }
+		});
+		expect(r.statusCode).toBe(200);
+		const body = r.json();
+		expect(body.ufvk).toBe('uview1abc');
+		expect(body.word_count).toBe(24);
+		expect(body.WARNING).toMatch(/seed phrase/);
+		scriptedMonero = saved;
+		moneroIdx = 0;
+	});
+
+	test('POST /v1/private/derive-viewkey rejects monero (not supported)', async () => {
+		const r = await appWatch.inject({
+			method: 'POST', url: '/v1/private/derive-viewkey',
+			payload: { chain: 'monero', phrase: Array(24).fill('abandon').join(' ') }
+		});
+		expect(r.statusCode).toBe(400);
+		expect(r.json().error.message).toMatch(/Zcash/);
+	});
+
+	test('POST /v1/private/derive-viewkey rejects oversized phrase (400)', async () => {
+		const r = await appWatch.inject({
+			method: 'POST', url: '/v1/private/derive-viewkey',
+			payload: { chain: 'zcash', phrase: 'a'.repeat(500) }
+		});
+		expect(r.statusCode).toBe(400);
 	});
 
 	test('GET /v1/private/watch/:id needs the watch token', async () => {

@@ -137,6 +137,7 @@ footer a { color: var(--muted) }
 		<a href="https://seneschal.space/">Home</a>
 		<a href="https://docs.seneschal.space/">Docs</a>
 		<a href="https://docs.seneschal.space/paymaster.html">Paymaster</a>
+		<a href="https://docs.seneschal.space/#premium-tier-x402">Premium API</a>
 		<a href="https://api.seneschal.space/v1/stats/overview">Raw JSON</a>
 	</nav>
 </header>
@@ -165,6 +166,109 @@ footer a { color: var(--muted) }
 		<div class="kpi-sub" id="kpi-liq-24h-sub">on-chain events observed</div>
 	</div>
 </div>
+
+<!-- ── Income strip — live paymaster + x402 telemetry ────────── -->
+<section id="income-strip" class="operator-strip panel" style="display:none;border-left-color:var(--good)">
+	<header class="operator-strip-head">
+		<h2 style="color:var(--good);margin:0">Treasury & income — live on Base</h2>
+		<span class="kpi-sub" id="income-treasury-sub">—</span>
+	</header>
+	<div class="operator-tiles">
+		<div class="op-tile">
+			<div class="op-label">Treasury (USD)</div>
+			<div class="op-value" id="income-treasury">—</div>
+			<div class="op-sub">paymaster float + accrued stables + wallet USDC</div>
+		</div>
+		<div class="op-tile">
+			<div class="op-label">Paymaster ETH float</div>
+			<div class="op-value mono-sm" id="income-eth-float">—</div>
+			<div class="op-sub" id="income-eth-float-sub">EntryPoint deposit + paymaster ETH balance</div>
+		</div>
+		<div class="op-tile">
+			<div class="op-label">Stables in paymaster</div>
+			<div class="op-value" id="income-stables">—</div>
+			<div class="op-sub" id="income-stables-sub">sweep when &gt; $50</div>
+		</div>
+		<div class="op-tile">
+			<div class="op-label">Recipient wallet USDC</div>
+			<div class="op-value" id="income-recipient">—</div>
+			<div class="op-sub" id="income-recipient-sub">x402 + sweeps land here</div>
+		</div>
+		<div class="op-tile">
+			<div class="op-label">Paymaster address</div>
+			<div class="op-value mono-sm"><a id="income-pm-link" href="#" target="_blank" rel="noopener" style="color:var(--accent)">—</a></div>
+			<div class="op-sub">v0.7 on Base · <a href="https://docs.seneschal.space/paymaster.html">integration docs</a></div>
+		</div>
+		<div class="op-tile">
+			<div class="op-label">x402 paywall</div>
+			<div class="op-value mono-sm" id="income-x402-status">—</div>
+			<div class="op-sub" id="income-x402-sub">$0.05/call · USDC on Base</div>
+		</div>
+	</div>
+</section>
+
+<!-- ── Private Watch strip — view-key payment monitoring telemetry ─── -->
+<section id="watch-strip" class="operator-strip panel" style="display:none;border-left-color:#9d6cff">
+	<header class="operator-strip-head">
+		<h2 style="color:#9d6cff;margin:0">Private Watch &mdash; view-key payment monitoring</h2>
+		<span class="kpi-sub" id="watch-strip-sub">XMR/ZEC payment-arrived webhooks · prepaid credit meter · view keys never spend</span>
+	</header>
+	<p style="color:var(--muted);margin:0.2em 0 0.9em;font-size:0.92em">
+		Hand us a <strong>view key</strong>, an address, and a webhook URL &mdash;
+		we POST you a signed notification the instant funds land. The meter
+		is <strong>$0.02/day idle + $0.005/webhook delivered</strong>; top up
+		any time. Plus on-demand $0.50 historical scans and free Zcash UFVK
+		derivation. No node, no signup.
+		See <a href="https://docs.seneschal.space/#private-watch-detail">integration docs</a>.
+	</p>
+	<div class="operator-tiles">
+		<div class="op-tile">
+			<div class="op-label">Service status</div>
+			<div class="op-value mono-sm" id="watch-status">—</div>
+			<div class="op-sub" id="watch-status-sub">paywall + scanner readiness</div>
+		</div>
+		<div class="op-tile">
+			<div class="op-label">Active watches</div>
+			<div class="op-value" id="watch-active">—</div>
+			<div class="op-sub" id="watch-active-sub">unique addresses being polled</div>
+		</div>
+		<div class="op-tile">
+			<div class="op-label">Webhooks delivered</div>
+			<div class="op-value" id="watch-deliveries">—</div>
+			<div class="op-sub" id="watch-deliveries-sub">since launch · HMAC-SHA256 signed</div>
+		</div>
+		<div class="op-tile">
+			<div class="op-label">By chain</div>
+			<div class="op-value mono-sm" id="watch-by-chain">—</div>
+			<div class="op-sub">XMR via monero-lws · ZEC via Orchard scanner</div>
+		</div>
+		<div class="op-tile">
+			<div class="op-label">Meter rates</div>
+			<div class="op-value mono-sm good" id="watch-price">—</div>
+			<div class="op-sub" id="watch-price-sub">per-day idle + per-webhook delivered</div>
+		</div>
+		<div class="op-tile">
+			<div class="op-label">Credit on the books</div>
+			<div class="op-value mono-sm" id="watch-credit">—</div>
+			<div class="op-sub" id="watch-credit-sub">remaining + topups / lifetime billed</div>
+		</div>
+		<div class="op-tile">
+			<div class="op-label">Top-up tiers</div>
+			<div class="op-value mono-sm" id="watch-topups">—</div>
+			<div class="op-sub" id="watch-topups-sub">explicit x402 routes</div>
+		</div>
+		<div class="op-tile">
+			<div class="op-label">Historical &amp; derive</div>
+			<div class="op-value mono-sm" id="watch-extras">—</div>
+			<div class="op-sub" id="watch-extras-sub">one-off scan + free UFVK derive</div>
+		</div>
+		<div class="op-tile">
+			<div class="op-label">Poll cadence</div>
+			<div class="op-value mono-sm" id="watch-cadence">—</div>
+			<div class="op-sub" id="watch-cadence-sub">tick interval (NFPT scanner stays warm)</div>
+		</div>
+	</div>
+</section>
 
 <section class="operator-strip panel">
 	<header class="operator-strip-head">
@@ -206,6 +310,17 @@ footer a { color: var(--muted) }
 </section>
 
 <div class="grid">
+
+	<!-- Treasury & income trend -->
+	<div id="income-chart-panel" class="panel span-12" style="display:none">
+		<h2>Treasury &amp; income trend <span style="font-weight:400;text-transform:none;letter-spacing:0;color:var(--muted)">— hourly snapshots, last 7 days</span></h2>
+		<div class="tabs" id="income-tabs">
+			<button data-window="24h" class="active">24 h</button>
+			<button data-window="7d">7 d</button>
+			<button data-window="30d">30 d</button>
+		</div>
+		<div class="chart-box"><canvas id="chart-income"></canvas></div>
+	</div>
 
 	<!-- HF histogram + builder pie -->
 	<div class="panel span-7">
@@ -332,9 +447,11 @@ const etherscanTx = h => `https://etherscan.io/tx/${h}`;
 const etherscanAddr = a => `https://etherscan.io/address/${a}`;
 
 // ── chart instances (mutable so we can update vs destroy) ─
-let chartHf = null, chartBuilders = null, chartLiqDaily = null;
+let chartHf = null, chartBuilders = null, chartLiqDaily = null, chartIncome = null;
 let currentBuilderWindow = '24h';
+let currentIncomeWindow = '7d';
 let lastOverview = null;
+let lastIncomeHistory = null;
 
 function setStatus(state, text) {
 	const el = document.getElementById('refresh-status');
@@ -588,6 +705,315 @@ function renderRecentLiq(d) {
 	`).join('');
 }
 
+const WINDOW_MS = { '24h': 24 * 3600_000, '7d': 7 * 24 * 3600_000, '30d': 30 * 24 * 3600_000 };
+
+function renderIncomeChart(history) {
+	const panel = document.getElementById('income-chart-panel');
+	if (!history || !history.enabled || !Array.isArray(history.series) || history.series.length === 0) {
+		panel.style.display = 'none';
+		return;
+	}
+	panel.style.display = '';
+	const series = history.series;
+	// Sample every-Nth point to keep the chart legible on 30d windows.
+	const stride = Math.max(1, Math.ceil(series.length / 720));
+	const sampled = series.filter((_, i) => i % stride === 0);
+	const labels = sampled.map(r => new Date(r.t_ms).toISOString().slice(5, 16).replace('T', ' '));
+	const treasury = sampled.map(r => r.treasury_usd);
+	const recipient = sampled.map(r => r.recipient_usdc);
+	const stables = sampled.map(r => r.paymaster_token_usd);
+	const cfg = {
+		type: 'line',
+		data: {
+			labels,
+			datasets: [
+				{
+					label: 'Treasury (USD)',
+					data: treasury,
+					borderColor: '#3fb950',
+					backgroundColor: 'rgba(63,185,80,0.18)',
+					fill: true,
+					tension: 0.25,
+					yAxisID: 'y1',
+					pointRadius: 0,
+					borderWidth: 2
+				},
+				{
+					label: 'Stables in paymaster (USD)',
+					data: stables,
+					borderColor: '#f0b429',
+					backgroundColor: 'rgba(240,180,41,0.10)',
+					fill: false,
+					tension: 0.25,
+					yAxisID: 'y2',
+					pointRadius: 0,
+					borderWidth: 1.5
+				},
+				{
+					label: 'Recipient wallet USDC',
+					data: recipient,
+					borderColor: '#bc8cff',
+					backgroundColor: 'rgba(188,140,255,0.10)',
+					fill: false,
+					tension: 0.25,
+					yAxisID: 'y2',
+					pointRadius: 0,
+					borderWidth: 1.5
+				}
+			]
+		},
+		options: {
+			responsive: true,
+			maintainAspectRatio: false,
+			interaction: { mode: 'index', intersect: false },
+			scales: {
+				y1: {
+					position: 'left',
+					beginAtZero: false,
+					ticks: { callback: v => fmtUSD(v) },
+					grid: { color: COLOURS.grid },
+					title: { display: true, text: 'Treasury USD', color: COLOURS.axis }
+				},
+				y2: {
+					position: 'right',
+					beginAtZero: true,
+					ticks: { callback: v => fmtUSD(v) },
+					grid: { display: false },
+					title: { display: true, text: 'Stables / wallet USDC', color: COLOURS.axis }
+				},
+				x: {
+					grid: { color: COLOURS.grid },
+					ticks: { maxRotation: 0, autoSkip: true, autoSkipPadding: 24 }
+				}
+			},
+			plugins: {
+				legend: { labels: { color: COLOURS.axis, boxWidth: 12 } },
+				tooltip: {
+					callbacks: {
+						label: ctx => `${ctx.dataset.label}: ${fmtUSD(ctx.parsed.y)}`
+					}
+				}
+			}
+		}
+	};
+	if (chartIncome) { chartIncome.data = cfg.data; chartIncome.options = cfg.options; chartIncome.update(); }
+	else chartIncome = new Chart(document.getElementById('chart-income'), cfg);
+}
+
+async function refreshIncomeHistory() {
+	const window = WINDOW_MS[currentIncomeWindow] ?? WINDOW_MS['7d'];
+	try {
+		const r = await fetch(`${API_BASE}/v1/stats/income/history?window_ms=${window}`, { headers: { accept: 'application/json' } });
+		if (!r.ok) throw new Error(`HTTP ${r.status}`);
+		const d = await r.json();
+		lastIncomeHistory = d;
+		renderIncomeChart(d);
+	} catch (e) {
+		// Don't surface a banner error for this — the panel just stays
+		// hidden and the rest of the page keeps working.
+		const panel = document.getElementById('income-chart-panel');
+		if (panel) panel.style.display = 'none';
+	}
+}
+
+function renderIncome(d) {
+	const strip = document.getElementById('income-strip');
+	const inc = d.income;
+	if (!inc || !inc.enabled) {
+		strip.style.display = 'none';
+		return;
+	}
+	strip.style.display = '';
+
+	// Treasury headline
+	const treasury = inc.treasury_usd ?? 0;
+	const elTreasury = document.getElementById('income-treasury');
+	elTreasury.textContent = fmtUSD(treasury);
+	elTreasury.className = 'op-value ' + (treasury > 0 ? 'good' : '');
+	const priceSrcLabel = inc.eth_usd_source === 'chainlink'
+		? `Chainlink ETH = $${(inc.eth_usd ?? 0).toFixed(0)}`
+		: `fallback ETH = $${(inc.eth_usd ?? 0).toFixed(0)}`;
+	document.getElementById('income-treasury-sub').textContent =
+		`updated ${new Date(inc.as_of_ms).toLocaleTimeString()} · ${priceSrcLabel}`;
+
+	// Paymaster ETH float
+	const pm = inc.paymaster ?? null;
+	const elFloat = document.getElementById('income-eth-float');
+	const elFloatSub = document.getElementById('income-eth-float-sub');
+	if (pm) {
+		const ethFloat = pm.total_eth_float ?? 0;
+		elFloat.textContent = `${ethFloat.toFixed(4)} ETH`;
+		// Colour: red below 0.005 (likely close to running out), warn under 0.02, good above.
+		elFloat.className = 'op-value mono-sm ' + (ethFloat < 0.005 ? 'bad' : ethFloat < 0.02 ? 'warn' : 'good');
+		const ethBalance = pm.eth_balance ?? 0;
+		const epDeposit = pm.entrypoint_deposit_eth ?? 0;
+		elFloatSub.textContent = `${epDeposit.toFixed(4)} ETH in EntryPoint + ${ethBalance.toFixed(4)} ETH in wallet`;
+	} else {
+		elFloat.textContent = '—';
+		elFloatSub.textContent = 'paymaster not configured';
+	}
+
+	// Stables accrued in paymaster
+	const elStables = document.getElementById('income-stables');
+	const elStablesSub = document.getElementById('income-stables-sub');
+	if (pm) {
+		const totalStables = pm.total_token_usd ?? 0;
+		const sweepable = pm.sweep_eligible_usd ?? 0;
+		elStables.textContent = fmtUSD(totalStables);
+		elStables.className = 'op-value ' + (sweepable >= 50 ? 'warn' : totalStables > 0 ? 'good' : '');
+		const tokenBits = (pm.tokens ?? [])
+			.filter(t => t.usd > 0)
+			.map(t => `${t.symbol} ${t.balance.toLocaleString('en-GB', { maximumFractionDigits: 4 })}`)
+			.join(' · ');
+		elStablesSub.textContent = tokenBits || 'no balances yet — sweep at > $50';
+	} else {
+		elStables.textContent = '—';
+		elStablesSub.textContent = '—';
+	}
+
+	// Recipient wallet USDC
+	const rcp = inc.recipient ?? null;
+	const elRcp = document.getElementById('income-recipient');
+	const elRcpSub = document.getElementById('income-recipient-sub');
+	if (rcp) {
+		const usdc = rcp.usdc_balance ?? 0;
+		elRcp.textContent = fmtUSD(usdc);
+		elRcp.className = 'op-value ' + (usdc > 0 ? 'good' : '');
+		elRcpSub.innerHTML = `<a href="https://basescan.org/address/${encodeURIComponent(rcp.address)}" target="_blank" rel="noopener" style="color:var(--muted)">${fmtAddr(rcp.address)} ↗</a>`;
+	} else {
+		elRcp.textContent = '—';
+		elRcpSub.textContent = 'x402 recipient not configured';
+	}
+
+	// Paymaster address pill (link to BaseScan)
+	const elPm = document.getElementById('income-pm-link');
+	if (pm) {
+		elPm.textContent = fmtAddr(pm.address);
+		elPm.href = `https://basescan.org/address/${encodeURIComponent(pm.address)}`;
+	} else {
+		elPm.textContent = '—';
+		elPm.removeAttribute('href');
+	}
+
+	// x402 paywall live/off (combines premium_tier info if present)
+	const elX = document.getElementById('income-x402-status');
+	const elXSub = document.getElementById('income-x402-sub');
+	const pw = d.premium_tier;
+	if (pw && pw.enabled) {
+		elX.textContent = 'LIVE';
+		elX.className = 'op-value mono-sm good';
+		elXSub.innerHTML = `${escapeHtml(pw.price_per_call || '$0.05')} / call · <a href="https://api.seneschal.space/.well-known/x402" target="_blank" rel="noopener" style="color:var(--muted)">/.well-known/x402 ↗</a>`;
+	} else {
+		elX.textContent = 'off';
+		elX.className = 'op-value mono-sm warn';
+		elXSub.textContent = 'paywall not configured';
+	}
+}
+
+// Private Watch tile — view-key payment monitoring. Backed by the
+// `private_watch` block in /v1/stats/overview, which the rest-server
+// folds in from the watch DB + live x402 paywall config.
+function renderPrivateWatch(d) {
+	const strip = document.getElementById('watch-strip');
+	const pw = d?.private_watch;
+	if (!pw || pw.enabled === false) {
+		// Hide if the service is off so we don't advertise a half-built
+		// surface. Dashboard renders "no Private Watch yet" as silence.
+		strip.style.display = 'none';
+		return;
+	}
+	strip.style.display = '';
+
+	const status = document.getElementById('watch-status');
+	const statusSub = document.getElementById('watch-status-sub');
+	status.textContent = 'LIVE';
+	status.className = 'op-value mono-sm good';
+	const priceCreate = pw.price_create ?? pw.price ?? '$0.10';
+	statusSub.textContent = `paywall ${priceCreate} · credit-meter billing`;
+
+	const stats = pw.stats ?? {};
+	const elActive = document.getElementById('watch-active');
+	const elActiveSub = document.getElementById('watch-active-sub');
+	const active = Number(stats.active ?? 0);
+	const total = Number(stats.total ?? 0);
+	const outOfCredit = Number(stats.out_of_credit ?? 0);
+	elActive.textContent = active.toLocaleString('en-GB');
+	elActive.className = 'op-value ' + (active > 0 ? 'good' : '');
+	elActiveSub.textContent = outOfCredit > 0
+		? `${total.toLocaleString('en-GB')} created · ${outOfCredit.toLocaleString('en-GB')} paused (out of credit)`
+		: `${total.toLocaleString('en-GB')} created total`;
+
+	const elDel = document.getElementById('watch-deliveries');
+	const elDelSub = document.getElementById('watch-deliveries-sub');
+	const deliveries = Number(stats.total_deliveries ?? 0);
+	elDel.textContent = deliveries.toLocaleString('en-GB');
+	elDel.className = 'op-value ' + (deliveries > 0 ? 'good' : '');
+	if (Number(stats.dead ?? 0) > 0) {
+		elDelSub.textContent = `${stats.dead} dead-lettered · auto-retired after 50 failures`;
+	}
+	else {
+		elDelSub.textContent = 'HMAC-SHA256 signed · 8s timeout · 4KB response cap';
+	}
+
+	const chain = stats.by_chain ?? {};
+	const xmr = Number(chain.monero ?? 0);
+	const zec = Number(chain.zcash ?? 0);
+	document.getElementById('watch-by-chain').textContent =
+		`XMR ${xmr.toLocaleString('en-GB')} · ZEC ${zec.toLocaleString('en-GB')}`;
+
+	// Convert an atomic-USDC string (6 decimals) to a "$X.XXXX" label.
+	const fmtUsd = (atomicStr) => {
+		const n = Number(atomicStr ?? 0);
+		if (!Number.isFinite(n)) return '$0.00';
+		return '$' + (n / 1_000_000).toFixed(n >= 100_000 ? 2 : 4);
+	};
+
+	const elPrice = document.getElementById('watch-price');
+	const elPriceSub = document.getElementById('watch-price-sub');
+	const dayUsd = pw.rate_per_day_atomic ? fmtUsd(pw.rate_per_day_atomic) : '$0.02';
+	const callUsd = pw.rate_per_call_atomic ? fmtUsd(pw.rate_per_call_atomic) : '$0.005';
+	elPrice.textContent = `${dayUsd}/day + ${callUsd}/hook`;
+	elPriceSub.textContent = `idle + per-webhook · paid in USDC on Base via x402`;
+
+	const elCredit = document.getElementById('watch-credit');
+	const elCreditSub = document.getElementById('watch-credit-sub');
+	if (elCredit) {
+		const creditAgg = stats.credit ?? {};
+		const remaining = fmtUsd(creditAgg.balance_atomic);
+		const topups = fmtUsd(creditAgg.topups_atomic);
+		const billed = fmtUsd(creditAgg.billed_atomic);
+		elCredit.textContent = remaining;
+		elCredit.className = 'op-value mono-sm ' + (Number(creditAgg.balance_atomic ?? 0) > 0 ? 'good' : '');
+		elCreditSub.textContent = `topups ${topups} · lifetime billed ${billed}`;
+	}
+
+	const elTop = document.getElementById('watch-topups');
+	const elTopSub = document.getElementById('watch-topups-sub');
+	if (elTop) {
+		const t10 = pw.price_topup_10c ?? '$0.10';
+		const t1  = pw.price_topup_1   ?? '$1.00';
+		const t5  = pw.price_topup_5   ?? '$5.00';
+		elTop.textContent = `${t10} / ${t1} / ${t5}`;
+		elTopSub.textContent = '/v1/private/topup, /topup-1, /topup-5';
+	}
+
+	const elExtras = document.getElementById('watch-extras');
+	const elExtrasSub = document.getElementById('watch-extras-sub');
+	if (elExtras) {
+		const histPrice = pw.price_historical ?? '$0.50';
+		elExtras.textContent = `${histPrice} historical · FREE derive`;
+		elExtrasSub.textContent = '/v1/private/historical · /v1/private/derive-viewkey';
+	}
+
+	const elCad = document.getElementById('watch-cadence');
+	const elCadSub = document.getElementById('watch-cadence-sub');
+	const cadenceSec = Number(pw.poll_interval_sec ?? 180);
+	elCad.textContent = cadenceSec >= 60
+		? `${Math.round(cadenceSec / 60)} min`
+		: `${cadenceSec} s`;
+	elCadSub.textContent = `${cadenceSec}s tick · NFPT scanner stays warm`;
+}
+
 function renderPremium(d) {
 	const panel = document.getElementById('premium-panel');
 	const p = d.premium_tier;
@@ -677,6 +1103,8 @@ async function refresh() {
 		const d = await r.json();
 		lastOverview = d;
 		renderKpis(d);
+		renderIncome(d);
+		renderPrivateWatch(d);
 		renderOperator(d);
 		renderHfHistogram(d);
 		renderBuilders(d);
@@ -704,8 +1132,22 @@ for (const btn of document.querySelectorAll('#builder-tabs button')) {
 	});
 }
 
+// income chart window tabs
+for (const btn of document.querySelectorAll('#income-tabs button')) {
+	btn.addEventListener('click', () => {
+		document.querySelectorAll('#income-tabs button').forEach(b => b.classList.remove('active'));
+		btn.classList.add('active');
+		currentIncomeWindow = btn.dataset.window;
+		refreshIncomeHistory();
+	});
+}
+
 refresh();
+refreshIncomeHistory();
 setInterval(refresh, REFRESH_MS);
+// History only changes hourly (poller cadence); 5-minute refresh is
+// plenty and avoids hammering the file-streaming endpoint.
+setInterval(refreshIncomeHistory, 5 * 60 * 1000);
 </script>
 </body>
 </html>

@@ -32,11 +32,22 @@ pre code { background: transparent; padding: 0 }
 .method { display: inline-block; font-weight: 600; color: #fff; background: #444; padding: 1px 6px; border-radius: 3px; font-size: 0.82em; margin-right: 0.4em }
 .method.get { background: #1462b3 }
 .method.post { background: #2c8a4b }
+.method.delete { background: #b32626 }
 table { border-collapse: collapse; width: 100%; margin: 0.8em 0; font-size: 0.92em }
 th, td { padding: 0.5em 0.7em; border: 1px solid var(--border); text-align: left; vertical-align: top }
 th { background: #f7f7f5 }
 .callout { background: #fff8e7; border-left: 3px solid #e0b400; padding: 0.6em 1em; margin: 1em 0; border-radius: 0 4px 4px 0 }
 .callout-info { background: #eaf3fc; border-left-color: #1462b3 }
+.hero { background: linear-gradient(135deg, #1462b3 0%, #0d3a6d 100%); color: #fff; padding: 1.6em 1.8em; border-radius: 10px; margin: 1.2em 0 1.6em }
+.hero h2 { color: #fff; border: none; padding: 0; margin: 0 0 .4em; font-size: 1.3em }
+.hero p { margin: 0.4em 0; line-height: 1.55 }
+.hero a { color: #cfe3ff }
+.hero a.cta { display: inline-block; background: #fff; color: #1462b3; padding: 0.4em 0.9em; border-radius: 4px; text-decoration: none; font-weight: 600; margin-right: 0.5em }
+.hero a.cta:hover { background: #f0f0f0 }
+.hero a.alt { display: inline-block; border: 1px solid rgba(255,255,255,.4); padding: 0.4em 0.9em; border-radius: 4px; text-decoration: none; color: #fff; margin-right: 0.5em }
+.hero a.alt:hover { background: rgba(255,255,255,.1) }
+.hero pre { background: rgba(255,255,255,.08); color: #f0f6ff; border: 1px solid rgba(255,255,255,.15) }
+.hero code { background: rgba(255,255,255,.12); color: #f0f6ff }
 footer { text-align: center; margin-top: 4em; padding-top: 2em; border-top: 1px solid var(--border); color: var(--muted); font-size: 0.9em }
 </style>
 </head>
@@ -59,6 +70,51 @@ Submit bugs and feature requests to <code>Rotwang9000</code> on Discord.
 <a href="https://stats.seneschal.space"><strong>live stats dashboard</strong></a>
 to see the data without writing a single line.
 </div>
+
+<section class="hero">
+<h2>Private Watch &mdash; the headline product</h2>
+<p>Get an HMAC-signed webhook the instant a Monero or Zcash payment lands at your address. You supply a <strong>view key</strong> (read-only, cannot spend), an address, and a webhook URL. We POST you a notification on every balance change. <strong>Prepaid credit meter: $0.02 per day idle + $0.005 per webhook delivered</strong> &mdash; no account, no API key, no node.</p>
+
+<p><strong>Who it&rsquo;s for:</strong> merchants accepting XMR or ZEC, donation pages, tip jars, payment bots, anyone selling something off-platform who would rather not run a 100&nbsp;GB <code>monerod</code> or 300&nbsp;GB <code>zebra</code> just to know whether the customer paid. View keys never let us move funds; if our DB leaks we can&rsquo;t spend anything.</p>
+
+<p><strong>How the meter works:</strong> the first $0.10 (paywall on watch creation) buys 5 idle days. After that, top up <strong>any amount</strong> via dedicated paywalled paths: $0.10, $1.00, or $5.00 a pop. Every webhook body carries a <code>credit</code> block so your receiver always knows how much it has left. We&rsquo;ll fire one <code>low_credit</code> warning when you have ~2 idle days remaining, even if no payments have come in.</p>
+
+<p><strong>Why it&rsquo;s cheap:</strong> small users pay cents per month even with no traffic. Heavy users pay a few dollars even after thousands of webhook deliveries. Compare to a self-hosted full node (~$30/mo VPS + storage), light-wallet subscriptions ($5&ndash;$50/mo), or merchant gateways (1&ndash;2%): the only ones with skin in the game.</p>
+
+<pre><code># 1. Create a watch (one x402 payment of $0.10 seeds $0.10 credit)
+curl -s https://api.seneschal.space/v1/private/watch \
+  -X POST -H 'content-type: application/json' \
+  -H 'x-payment: &lt;eip3009 payload, $0.10 USDC on Base&gt;' \
+  -d '{
+    "chain": "monero",
+    "address": "44AFFq…",
+    "viewKey": "0123…",
+    "webhookUrl": "https://shop.example.com/webhook/xmr"
+  }'
+
+# 2. Top up later (a $1 top-up buys ~50 idle days):
+curl -X POST https://api.seneschal.space/v1/private/topup-1 \
+  -H 'x-payment: &lt;eip3009 payload, $1.00 USDC on Base&gt;' \
+  -H 'content-type: application/json' \
+  -d '{"watchId":"...","watchToken":"..."}'
+
+# 3. One-off historical lookup (returns notes; view key never persists):
+curl -X POST https://api.seneschal.space/v1/private/historical \
+  -H 'x-payment: &lt;eip3009 payload, $0.50 USDC on Base&gt;' \
+  -H 'content-type: application/json' \
+  -d '{"chain":"zcash","address":"u1...","viewKey":"uview1...","includeNotes":true}'
+
+# 4. FREE: derive a Zcash UFVK from a BIP-39 mnemonic (loud warning, rate-limited):
+curl -X POST https://api.seneschal.space/v1/private/derive-viewkey \
+  -H 'content-type: application/json' \
+  -d '{"chain":"zcash","phrase":"abandon abandon ... 24 words"}'</code></pre>
+
+<p style="margin-top:1em">
+<a class="cta" href="#private-watch-detail">Full integration guide &raquo;</a>
+<a class="alt" href="https://api.seneschal.space/v1/private/info">/v1/private/info</a>
+<a class="alt" href="https://stats.seneschal.space">Live counters</a>
+</p>
+</section>
 
 <div class="callout callout-info">
 <strong>Looking for the ERC-4337 paymaster?</strong>
@@ -102,7 +158,8 @@ Add this to your MCP client config (e.g. <code>~/.cursor/mcp.json</code>):
   }
 }</code></pre>
 <p>
-Nine tools become available to your agent: <code>seneschal_health</code>,
+The full Seneschal tool surface becomes available to your agent:
+<code>seneschal_health</code>,
 <code>seneschal_list_at_risk_borrowers</code>,
 <code>seneschal_list_borrowers</code>,
 <code>seneschal_recent_liquidations</code>,
@@ -110,7 +167,17 @@ Nine tools become available to your agent: <code>seneschal_health</code>,
 <code>seneschal_get_borrower_history</code>,
 <code>seneschal_builder_leaderboard</code>,
 <code>seneschal_stats_overview</code>,
-<code>seneschal_flashloan_providers</code>.
+<code>seneschal_flashloan_providers</code>,
+<code>seneschal_q</code> (Penny Oracle dispatcher),
+plus the Private Watch suite:
+<code>seneschal_private_watch_info</code>,
+<code>seneschal_private_watch_create</code>,
+<code>seneschal_private_watch_topup</code>,
+<code>seneschal_private_watch_historical</code>,
+<code>seneschal_private_watch_derive_viewkey</code>,
+<code>seneschal_private_watch_status</code>,
+<code>seneschal_private_watch_cancel</code> and
+<code>seneschal_private_watch_test</code>.
 </p>
 
 <h2>REST endpoints</h2>
@@ -289,12 +356,27 @@ designed for tight agent loops where bulk JSON is overkill. See the
 <tr>
 <td><code>POST /v1/private/watch</code></td>
 <td><strong>$0.10</strong></td>
-<td><strong>Private Watch.</strong> One paid call subscribes a Monero
-or Zcash address to view-key based payment monitoring; the receiver
-gets a HMAC-signed webhook on every balance change for 7 days (1&ndash;30
-configurable). View keys are AES-256-GCM encrypted at rest with an
-operator-supplied master key. See
-<a href="#private-watch">private watch below</a>.</td>
+<td><strong>Private Watch &mdash; create.</strong> Subscribes a Monero
+or Zcash address to view-key based payment monitoring. $0.10 buys the
+watch + $0.10 of opening credit. Credit meter runs at $0.02/day idle +
+$0.005/webhook delivered. View keys are AES-256-GCM encrypted at rest
+with an operator-supplied master key. See
+<a href="#private-watch-detail">private watch below</a>.</td>
+</tr>
+<tr>
+<td><code>POST /v1/private/topup</code> &mdash; $0.10<br><code>POST /v1/private/topup-1</code> &mdash; $1.00<br><code>POST /v1/private/topup-5</code> &mdash; $5.00</td>
+<td><strong>tiered</strong></td>
+<td><strong>Top up an existing watch.</strong> Three explicit tiers so the x402 paywall can quote each price up front. $0.10 buys ~5 idle days, $1.00 buys ~50, $5.00 buys ~250. Body: <code>{watchId, watchToken}</code>.</td>
+</tr>
+<tr>
+<td><code>POST /v1/private/historical</code></td>
+<td><strong>$0.50</strong></td>
+<td><strong>One-off scan.</strong> Returns all spendable + spent notes for a view key without setting up a watch. View key streams to NFPT in memory only &mdash; never written to our SQLite or logs. Body: <code>{chain, address, viewKey, birthdayHeight?, toHeight?, includeNotes?}</code>.</td>
+</tr>
+<tr>
+<td><code>POST /v1/private/derive-viewkey</code></td>
+<td><strong>FREE</strong></td>
+<td><strong>BIP-39 &rarr; UFVK derivation (Zcash).</strong> Rate-limited to 6/min/IP. Forwards a 12- or 24-word seed phrase to NFPT&rsquo;s <code>orchard-scanner</code> CLI and returns the matching read-only Unified Full Viewing Key. <strong>Loud security warning</strong> in the response &mdash; the phrase transits our server (no logging, no persistence) but a network observer between you and us would see the bytes; derive offline if you can.</td>
 </tr>
 </tbody>
 </table>
@@ -394,25 +476,41 @@ The <code>account</code> is any viem-compatible signer holding a small
 USDC balance on Base — a fresh EOA + 1 USDC will fund ~20 paid calls.
 </p>
 
-<h3 id="private-watch">Private Watch &mdash; /v1/private/watch (XMR/ZEC payment monitoring)</h3>
+<h3 id="private-watch-detail">Private Watch &mdash; /v1/private/* (XMR/ZEC payment monitoring)</h3>
 <p>
-This is Phase&nbsp;2 of the privacy-chain product line. The Penny Oracle answers
-chain-tip questions; the Private Watch answers <em>"did <strong>I</strong> just get
-paid?"</em>. The agent hands us a public address, a view key, and a webhook URL.
-We do the heavy lifting (scanning every new block against the view key on a
-local <code>monero-lws</code> or Zcash UFVK scanner) and POST a signed event to the
-webhook the moment the balance changes.
+This is the headline product. The agent (or merchant, or wallet) hands us a
+public address, a <strong>view key</strong>, and a webhook URL. We scan every
+new block against the view key on the local <code>NFPT</code> wallet-scanner
+(driven by <code>monerod</code> for Monero and <code>zebra</code> + the
+Zcash <code>orchard-scanner</code> binary for Zcash) and POST a signed event
+to the webhook the moment the balance changes.
+</p>
+<p>
+<strong>Pricing &mdash; prepaid credit meter.</strong> One payment of $0.10
+opens a watch and seeds $0.10 of credit. The watch then drains at <strong>$0.02
+per UTC day idle</strong> (proportional, billed each poll tick) <em>plus</em>
+<strong>$0.005 per webhook delivered</strong>. When credit hits a low threshold
+($0.05) we POST a one-shot <code>low_credit</code> warning so your receiver can
+top up before going silent. Top up any time with one of three paywalled paths
+($0.10 / $1 / $5). Credit balance is in every webhook body so well-behaved
+receivers can ignore the dedicated event.
 </p>
 <table>
 <thead>
 <tr><th>Endpoint</th><th>Method</th><th>Auth</th><th>Description</th></tr>
 </thead>
 <tbody>
-<tr><td><code>/v1/private/watch</code></td><td><code>POST</code></td><td>x402 <strong>$0.10</strong></td><td>Create a watch. Body: <code>{chain, address, viewKey, webhookUrl, durationDays?, birthdayHeight?}</code>. Returns <code>{watchId, watchToken, webhookSecret, expiresAt}</code>.</td></tr>
-<tr><td><code>/v1/private/watch/:id</code></td><td><code>GET</code></td><td>header <code>x-watch-token</code></td><td>Read current status: last polled time, delivery count, last known balance snapshot. <strong>Free</strong>.</td></tr>
-<tr><td><code>/v1/private/watch/:id</code></td><td><code>DELETE</code></td><td>header <code>x-watch-token</code></td><td>Cancel a watch. <strong>Free</strong>.</td></tr>
-<tr><td><code>/v1/private/info</code></td><td><code>GET</code></td><td>&mdash;</td><td>Free metadata: current price, supported chains, upstream NFPT health, security notes.</td></tr>
-<tr><td><code>/v1/private/health</code></td><td><code>GET</code></td><td>&mdash;</td><td>Counters only (no PII) for ops monitoring.</td></tr>
+<tr><td><code>/v1/private/watch</code></td><td><code>POST</code></td><td>x402 <strong>$0.10</strong></td><td>Create a watch with $0.10 of starter credit. Body: <code>{chain, address, viewKey, webhookUrl, birthdayHeight?}</code>. Returns <code>{watchId, watchToken, webhookSecret, expiresAt, creditAtomic, ratePerDayAtomic, ratePerCallAtomic, topupEndpoints, testEndpoint}</code>. <code>durationDays</code> is silently ignored for backward compatibility &mdash; the credit meter is the only knob now.</td></tr>
+<tr><td><code>/v1/private/topup</code></td><td><code>POST</code></td><td>x402 <strong>$0.10</strong></td><td>Adds $0.10 of credit (~5 idle days). Body: <code>{watchId, watchToken}</code>.</td></tr>
+<tr><td><code>/v1/private/topup-1</code></td><td><code>POST</code></td><td>x402 <strong>$1.00</strong></td><td>Adds $1.00 of credit (~50 idle days).</td></tr>
+<tr><td><code>/v1/private/topup-5</code></td><td><code>POST</code></td><td>x402 <strong>$5.00</strong></td><td>Adds $5.00 of credit (~250 idle days).</td></tr>
+<tr><td><code>/v1/private/historical</code></td><td><code>POST</code></td><td>x402 <strong>$0.50</strong></td><td>One-off historical scan. Returns spendable + spent + total-received totals (and optionally per-note breakdowns). View key streams to NFPT in-memory only &mdash; never written to our SQLite or logs.</td></tr>
+<tr><td><code>/v1/private/derive-viewkey</code></td><td><code>POST</code></td><td><strong>FREE</strong> (6/min/IP)</td><td>Zcash only. Derives a UFVK from a BIP-39 mnemonic via NFPT&rsquo;s <code>orchard-scanner</code>. Phrase transits in-memory; we do not log or persist. <strong>Use offline derivation where possible.</strong></td></tr>
+<tr><td><code>/v1/private/watch/:id</code></td><td><code>GET</code></td><td>header <code>x-watch-token</code></td><td>Read current status: credit block (remaining / days_remaining / low-credit flag), last polled time, delivery count, last event type, last known balance snapshot, ETA to next poll. <strong>Free</strong>.</td></tr>
+<tr><td><code>/v1/private/watch/:id</code></td><td><code>DELETE</code></td><td>header <code>x-watch-token</code></td><td>Cancel a watch (any remaining credit is forfeited &mdash; this is by design to avoid refund accounting and chargebacks). <strong>Free</strong>.</td></tr>
+<tr><td><code>/v1/private/watch/:id/test</code></td><td><code>POST</code></td><td>header <code>x-watch-token</code></td><td>Fires one synthetic webhook so you can verify your signature handling and receiver before relying on real payments. Stamped <code>event: synthetic_test</code> so well-behaved receivers can branch and skip processing. <strong>Free</strong>.</td></tr>
+<tr><td><code>/v1/private/info</code></td><td><code>GET</code></td><td>&mdash;</td><td>Free metadata: current prices, supported chains, top-up tiers, upstream NFPT health, security notes.</td></tr>
+<tr><td><code>/v1/private/health</code></td><td><code>GET</code></td><td>&mdash;</td><td>Counters only (no PII) for ops monitoring &mdash; includes credit aggregates.</td></tr>
 </tbody>
 </table>
 <p>
@@ -420,10 +518,12 @@ webhook the moment the balance changes.
 <code>content-type: application/json</code> and three Seneschal headers:
 </p>
 <pre><code>X-Seneschal-Watch-Id: &lt;uuid&gt;
-X-Seneschal-Event: balance_change | scan_complete | status_change
+X-Seneschal-Event: balance_change | scan_complete | status_change | low_credit | synthetic_test
 X-Seneschal-Signature: sha256=&lt;HMAC-SHA256(webhookSecret, exact request body)&gt;</code></pre>
 <p>
-The body is plain JSON:
+The body is plain JSON. Every delivery (including <code>low_credit</code>
+warnings) carries a <code>credit</code> block so receivers always know
+where they stand:
 </p>
 <pre><code>{
   "watchId": "fb1a29bd-…",
@@ -438,8 +538,24 @@ The body is plain JSON:
     "balance_atomic": "1234567890",
     "before_atomic": "0",
     "after_atomic":  "1234567890"
+  },
+  "credit": {
+    "remaining_atomic": "94750",
+    "remaining_usd": "0.0948",
+    "days_remaining": 4.7,
+    "low_credit": false,
+    "rate_per_day_atomic": "20000",
+    "rate_per_call_atomic": "5000",
+    "low_credit_threshold_atomic": "50000"
   }
 }</code></pre>
+<p>
+The <code>low_credit</code> event is fired <strong>once</strong> when
+<code>remaining_atomic</code> first drops below the threshold ($0.05 of
+credit, ~2.5 idle days). Top up &gt;= the threshold to re-arm the
+warning. After credit reaches zero the watch stops being polled
+entirely; no further deliveries happen until the next top-up.
+</p>
 <p>
 Receivers verify the signature with the per-watch
 <code>webhookSecret</code> returned at creation. Constant-time HMAC comparison
@@ -452,20 +568,65 @@ watches. Bodies are capped at 64&nbsp;KB.
 nonetheless encrypt the key at rest with AES-256-GCM under an operator-held
 master key (<code>PRIVATE_WATCH_ENCRYPTION_KEY</code>); plaintext only exists in
 memory while the poller is decrypting it for the next scan call. Webhook URLs
-pointing at private IPs (RFC1918, loopback, link-local, cloud metadata) are
-rejected at creation time to defeat SSRF.
+are vetted at creation:
 </p>
+<ul>
+<li><strong>HTTPS-only</strong> in production (<code>http://</code> rejected unless the operator opts in for local dev).</li>
+<li><strong>SSRF guard</strong> rejects RFC1918, loopback, link-local, RFC6598 CGNAT, IPv6 unique-local / link-local / loopback, and cloud-metadata IPs.</li>
+<li><strong>DNS-resolve-and-recheck</strong> &mdash; we resolve the hostname and re-test every returned A/AAAA against the same blocklist, so <code>evil.example.com</code> can&rsquo;t alias to <code>127.0.0.1</code>.</li>
+<li><strong>No userinfo</strong> &mdash; URLs containing <code>https://user:pass@&hellip;</code> are rejected so we never echo credentials onto the wire.</li>
+</ul>
 <p>
 <strong>Tunables.</strong> Polling cadence is 3&thinsp;min by default (stays inside
-NFPT's 5&thinsp;min scanner idle window). On webhook failure we retry on the next
-tick; 50 consecutive failures retire the watch with a <code>dead</code> flag.
-After expiry the row is hard-deleted on the next tick.
+NFPT's 5&thinsp;min scanner idle window). Webhook receivers get an 8&thinsp;s
+HTTP timeout and we cap drained response body at 4&thinsp;KB to defeat
+slow-loris megabyte responses. On webhook failure we retry on the next tick;
+50 consecutive failures retire the watch with a <code>dead</code> flag. After
+expiry the row is hard-deleted on the next tick.
+</p>
+<p>
+<strong>Zcash birthday height.</strong> If omitted we default to NU6
+(<code>3,042,000</code>) so the scanner never trips into a multi-hour
+<code>autoDetect</code> backwards-walk. Wallets created before April&nbsp;2024
+should pass an explicit <code>birthdayHeight</code> matching wallet age.
 </p>
 <p>
 <strong>MCP.</strong> Agents already inside a paid MCP session can use
-<code>seneschal_private_watch_create</code> (same input shape) and
-<code>seneschal_private_watch_info</code> for budgeting.
+<code>seneschal_private_watch_create</code>,
+<code>seneschal_private_watch_topup</code>,
+<code>seneschal_private_watch_historical</code>,
+<code>seneschal_private_watch_derive_viewkey</code>,
+<code>seneschal_private_watch_status</code>,
+<code>seneschal_private_watch_cancel</code> and
+<code>seneschal_private_watch_info</code> for end-to-end flow without
+direct HTTP.
 </p>
+
+<h4 id="historical-derive">Historical lookups &amp; view-key derivation</h4>
+<p>
+Two new on-demand services let agents recover state without committing
+to a long-running watch:
+</p>
+<ul>
+<li><strong><code>POST /v1/private/historical</code> &mdash; $0.50 one-off.</strong>
+For Zcash we run an Orchard scan with <code>autoDetect: true</code>
+(birthday height auto-discovered) and <code>witness: true</code> so the
+response includes per-note anchor + Merkle-path data alongside totals.
+For Monero we use the full <code>monero-lws</code> scan and aggregate
+incoming + outgoing notes into <code>received_atomic</code> /
+<code>spent_atomic</code> / <code>spendable_atomic</code>. View keys
+stream through the upstream NFPT API in-memory only &mdash; never written
+to our SQLite, never logged.</li>
+<li><strong><code>POST /v1/private/derive-viewkey</code> &mdash; FREE.</strong>
+Zcash only. Forwards a 12- or 24-word BIP-39 mnemonic to NFPT&rsquo;s
+<code>orchard-scanner derive-ufvk</code> command and returns the matching
+read-only UFVK plus optional Sapling + transparent FVKs. <strong>Loud
+security warning</strong> in the response: the seed phrase transits our
+server (we never log or persist it, but a TLS-MitM on the network path
+would see the bytes). Whenever feasible, run <code>orchard-scanner</code>
+locally and supply the resulting UFVK directly. Rate-limited to 6
+requests per IP per minute.</li>
+</ul>
 
 <h2>Data freshness &amp; coverage</h2>
 <ul>

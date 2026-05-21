@@ -51,10 +51,12 @@ import {
 } from './private-watch-crypto.js';
 import {
 	createNfptClient,
-	healthCheck as nfptHealthCheck
+	healthCheck as nfptHealthCheck,
+	deriveUfvk
 } from './private-watch-nfpt.js';
 import {
 	resolveAndValidateWatchRequest,
+	validateDeriveRequest,
 	buildPrivateInfo,
 	WATCH_CONSTANTS
 } from './private-watch.js';
@@ -383,14 +385,13 @@ export function buildMcpServer(options = {}) {
 
 	server.registerTool('seneschal_private_watch_create', {
 		title: 'Create a Monero/Zcash payment watch (paid via x402 at REST)',
-		description: `Subscribe a Monero or Zcash address to view-key-based payment monitoring. ${WATCH_CONSTANTS.DEFAULT_DURATION_DAYS}-day monitoring window by default; the receiver gets a HMAC-signed webhook on every balance change. View keys are AES-256-GCM encrypted at rest. The REST surface at POST /v1/private/watch is paywalled at $0.10 via x402; this MCP tool exposes the same functionality so agents already in a paid MCP session can configure their watches without context-switching.`,
+		description: `Subscribe a Monero or Zcash address to view-key-based payment monitoring. The watch runs on a prepaid credit meter (${WATCH_CONSTANTS.DAY_RATE_ATOMIC} atomic USDC per day idle + ${WATCH_CONSTANTS.CALL_RATE_ATOMIC} per webhook delivered). Creation at the REST surface (POST /v1/private/watch) is paywalled at $0.10 via x402 and seeds the watch with $0.10 of credit. Receiver gets HMAC-signed webhooks plus a 'credit' block on every body; a 'low_credit' warning fires once before the meter expires. Top up via /v1/private/topup, topup-1, or topup-5. View keys are AES-256-GCM encrypted at rest.`,
 		inputSchema: {
 			chain: z.enum(['monero', 'zcash']).describe('Which privacy chain to monitor.'),
 			address: z.string().min(1).describe('Public address for the chain. Monero: standard 95-char base58. Zcash: u1*, t1*, t3*, zs1*.'),
 			viewKey: z.string().min(1).describe('Monero: 64-hex private view key. Zcash: UFVK starting with uview1.'),
 			webhookUrl: z.string().min(1).describe('HTTPS endpoint we POST signed webhooks to. Private RFC1918/localhost addresses are rejected.'),
-			durationDays: z.number().int().min(WATCH_CONSTANTS.MIN_DURATION_DAYS).max(WATCH_CONSTANTS.MAX_DURATION_DAYS).optional().describe(`Watch lifetime in days. Default ${WATCH_CONSTANTS.DEFAULT_DURATION_DAYS}.`),
-			birthdayHeight: z.number().int().nonnegative().optional().describe('Zcash only: block height the wallet was created at. Skips re-scanning earlier blocks. Strongly recommended for Zcash to keep scans fast.')
+			birthdayHeight: z.number().int().nonnegative().optional().describe('Block height the wallet was created at. Monero: scans forward from this height. Zcash: defaults to NU6 (3_042_000) if unspecified.')
 		}
 	}, async (params) => {
 		if (!privateWatchReady()) {
@@ -428,7 +429,9 @@ export function buildMcpServer(options = {}) {
 			webhookUrl: input.webhookUrl,
 			webhookSecret,
 			birthdayHeight: input.birthdayHeight,
-			durationMs: input.durationMs,
+			creditAtomic: WATCH_CONSTANTS.STARTER_CREDIT_ATOMIC,
+			dayRateAtomic: WATCH_CONSTANTS.DAY_RATE_ATOMIC,
+			maxLifetimeMs: WATCH_CONSTANTS.MAX_WATCH_LIFETIME_MS,
 			nowMs: input.now
 		});
 		return asContent({
@@ -437,11 +440,104 @@ export function buildMcpServer(options = {}) {
 			webhookSecret,
 			chain: input.chain,
 			address: input.address,
+			creditAtomic: String(created.creditAtomic),
+			ratePerDayAtomic: String(WATCH_CONSTANTS.DAY_RATE_ATOMIC),
+			ratePerCallAtomic: String(WATCH_CONSTANTS.CALL_RATE_ATOMIC),
 			expiresAt: new Date(created.expiresAt).toISOString(),
 			pollIntervalSec: WATCH_CONSTANTS.DEFAULT_POLL_INTERVAL_SEC,
 			signatureHeader: 'X-Seneschal-Signature: sha256=<HMAC-SHA256(webhookSecret, body)>',
-			note: 'Watch is now active. Use seneschal_private_watch_info for service metadata; poll status/cancel via REST GET/DELETE /v1/private/watch/:id with header x-watch-token.'
+			topupEndpoints: {
+				'10c': '/v1/private/topup',
+				'1usd': '/v1/private/topup-1',
+				'5usd': '/v1/private/topup-5'
+			},
+			note: 'Watch is now active. Top up via the REST surface before the meter drains. Use seneschal_private_watch_topup or POST /v1/private/topup*; status/cancel via REST GET/DELETE /v1/private/watch/:id with header x-watch-token.'
 		});
+	});
+
+	server.registerTool('seneschal_private_watch_topup', {
+		title: 'Top up an existing watch (paid via x402 at REST)',
+		description: 'Add prepaid credit to an existing Private Watch. Three tiers — $0.10 (default), $1.00, and $5.00 — each settling at the matching REST path (/v1/private/topup, /topup-1, /topup-5). Credit is in atomic USDC ($0.02/day idle, $0.005/call). This tool returns the URL the agent should POST to with its x402 client; it does NOT settle payment itself.',
+		inputSchema: {
+			watchId: z.string().min(36).max(36).describe('The watchId returned from seneschal_private_watch_create.'),
+			watchToken: z.string().min(1).describe('The watchToken returned from seneschal_private_watch_create (constant-time compared at the REST surface).'),
+			tier: z.enum(['10c', '1', '5']).default('10c').describe('Top-up size. 10c = $0.10 (≈5 days idle), 1 = $1.00 (≈50 days), 5 = $5.00 (≈250 days).')
+		}
+	}, async (params) => {
+		const tier = params.tier ?? '10c';
+		const path = tier === '10c' ? '/v1/private/topup' : tier === '1' ? '/v1/private/topup-1' : '/v1/private/topup-5';
+		const creditAtomic = tier === '10c'
+			? WATCH_CONSTANTS.TOPUP_10C_ATOMIC
+			: tier === '1'
+				? WATCH_CONSTANTS.TOPUP_1_ATOMIC
+				: WATCH_CONSTANTS.TOPUP_5_ATOMIC;
+		return asContent({
+			topup_endpoint: path,
+			tier,
+			creditAtomic: String(creditAtomic),
+			body: { watchId: params.watchId, watchToken: params.watchToken },
+			x402_note: 'Post the body to this path with an x402 payment header. The route is paywalled — your client (e.g. @x402/client) settles on Base mainnet then re-POSTs. The handler debits the credit meter only after settlement is verified.'
+		});
+	});
+
+	server.registerTool('seneschal_private_watch_historical', {
+		title: 'One-off historical scan (paid via x402 at REST)',
+		description: 'Return all spendable + spent notes for a view key without setting up a watch. The view key never touches our SQLite — it flows through to NFPT in memory only. Use this when you want to reconcile a wallet at a point in time. Priced at $0.50 / call at the REST surface.',
+		inputSchema: {
+			chain: z.enum(['monero', 'zcash']).describe('Which privacy chain to scan.'),
+			address: z.string().min(1).describe('Address whose notes you want.'),
+			viewKey: z.string().min(1).describe('Monero: 64-hex private view key. Zcash: UFVK starting with uview1.'),
+			birthdayHeight: z.number().int().nonnegative().optional().describe('Skip scanning earlier blocks. Zcash auto-detects when omitted (slower but always correct).'),
+			toHeight: z.number().int().nonnegative().optional().describe('Stop scanning at this block height. Defaults to chain tip.'),
+			includeNotes: z.boolean().optional().describe('Include a per-note breakdown (value/height/tx_hash/spent) in the response. Default false — totals only.')
+		}
+	}, async (params) => {
+		return asContent({
+			historical_endpoint: '/v1/private/historical',
+			body: {
+				chain: params.chain,
+				address: params.address,
+				viewKey: params.viewKey,
+				birthdayHeight: params.birthdayHeight ?? null,
+				toHeight: params.toHeight ?? null,
+				includeNotes: params.includeNotes ?? false
+			},
+			x402_note: 'Post the body to /v1/private/historical with an x402 payment header. View key is held in memory only during the request; nothing about it is logged or persisted.'
+		});
+	});
+
+	server.registerTool('seneschal_private_watch_derive_viewkey', {
+		title: 'Derive a Zcash UFVK from a BIP-39 mnemonic (FREE, rate-limited)',
+		description: 'Hands a 12- or 24-word seed phrase to NFPT\'s orchard-scanner CLI, returns the matching UFVK. FREE but rate-limited to 6/minute/IP. Be loud about the security trade-off: the phrase transits our server (no logging, no persistence) but a network observer between you and us would see the bytes. Offline derivation with the orchard-scanner binary on a trusted host is the safer alternative — see https://docs.seneschal.space/derive-locally. A UFVK is read-only; it cannot spend funds.',
+		inputSchema: {
+			chain: z.enum(['zcash']).describe('Currently only Zcash (Orchard) UFVK derivation is supported; Monero coming later.'),
+			phrase: z.string().min(1).describe('12- or 24-word BIP-39 mnemonic.'),
+			network: z.enum(['mainnet', 'testnet', 'regtest']).default('mainnet').describe('Zcash network the wallet belongs to.')
+		}
+	}, async (params) => {
+		if (!nfptClient) {
+			return asContent({ error: { code: 'nfpt_not_configured', message: 'derive-viewkey requires NFPT_BASE_URL' } });
+		}
+		let input;
+		try { input = validateDeriveRequest(params); }
+		catch (err) {
+			return asContent({ error: { code: 'invalid_request', message: err?.message ?? String(err) } });
+		}
+		try {
+			const result = await deriveUfvk(nfptClient, { mnemonic: input.phrase, network: input.network });
+			return asContent({
+				chain: input.chain,
+				network: input.network,
+				word_count: input.wordCount,
+				ufvk: result.ufvk,
+				sapling_fvk: result.sapling_fvk ?? null,
+				transparent_fvk: result.transparent_fvk ?? null,
+				WARNING: 'Your seed phrase transited our server over TLS. We do NOT log or persist it, but a network observer between you and us would have seen the bytes. For maximum safety, derive offline using the orchard-scanner binary on a trusted machine.'
+			});
+		}
+		catch (err) {
+			return asContent({ error: { code: 'derive_failed', message: err?.message ?? String(err) } });
+		}
 	});
 
 	server.registerTool('seneschal_flashloan_providers', {
@@ -504,8 +600,11 @@ export function getStaticServerCard() {
 			{ name: 'seneschal_premium_opportunities', description: 'Top at-risk borrowers ranked by expected value, annotated with realised market intel. Paid via x402 at the REST surface.' },
 			{ name: 'seneschal_premium_builder_stats', description: 'Per-builder bid distribution and hourly slot histogram for searcher bundle pricing. Paid via x402 at the REST surface.' },
 			{ name: 'seneschal_q', description: 'Penny Oracle dispatcher — atomic single-fact endpoints across DeFi (liquidatable, at-risk-count, top-builder, builder-share, builder-bid, recent-liquidations, cheapest-flashloan, data-freshness) and privacy chains (xmr/height, xmr/mempool, xmr/fee, xmr/last-block, zec/height, zec/mempool, zec/last-block). All priced at $0.001/call at the REST surface.' },
-			{ name: 'seneschal_private_watch_info', description: 'Free metadata for the view-key payment-watch service: price, supported chains, NFPT upstream health, security notes.' },
-			{ name: 'seneschal_private_watch_create', description: 'Subscribe an XMR/ZEC address (with view key) to webhook-delivered payment monitoring. Paid via x402 at the REST surface; mirrored here so agents in a paid MCP session can configure without context-switching.' }
+			{ name: 'seneschal_private_watch_info', description: 'Free metadata for the view-key payment-watch service: pricing meter, supported chains, NFPT upstream health, security notes.' },
+			{ name: 'seneschal_private_watch_create', description: 'Subscribe an XMR/ZEC address (with view key) to webhook-delivered payment monitoring. Prepaid credit meter ($0.02/day + $0.005/call). $0.10 creation via x402 at the REST surface.' },
+			{ name: 'seneschal_private_watch_topup', description: 'Returns the URL + body the agent should POST to (with an x402 payment) to top up an existing watch. Three tiers: $0.10, $1, $5.' },
+			{ name: 'seneschal_private_watch_historical', description: 'Returns the URL + body for a one-off paid scan (POST /v1/private/historical at $0.50) returning spendable + spent notes for a view key. View key NEVER persists.' },
+			{ name: 'seneschal_private_watch_derive_viewkey', description: 'FREE, rate-limited Zcash UFVK derivation from a BIP-39 mnemonic via NFPT\'s orchard-scanner CLI. Loud security warning about phrase transit.' }
 		],
 		resources: [],
 		prompts: []
