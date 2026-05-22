@@ -994,7 +994,10 @@ function renderPrivateWatch(d) {
 		const t1  = pw.price_topup_1   ?? '$1.00';
 		const t5  = pw.price_topup_5   ?? '$5.00';
 		elTop.textContent = `${t10} / ${t1} / ${t5}`;
-		elTopSub.textContent = '/v1/private/topup, /topup-1, /topup-5';
+		const customRange = priv?.topup_custom?.min_atomic && priv?.topup_custom?.max_atomic
+			? `+ /topup-custom ($${(Number(priv.topup_custom.min_atomic) / 1_000_000).toFixed(2)}–$${(Number(priv.topup_custom.max_atomic) / 1_000_000).toFixed(2)})`
+			: '+ /topup-custom (variable)';
+		elTopSub.textContent = '/v1/private/topup, /topup-1, /topup-5 ' + customRange;
 	}
 
 	const elExtras = document.getElementById('watch-extras');

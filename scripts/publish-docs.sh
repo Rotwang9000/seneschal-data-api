@@ -31,6 +31,8 @@ MAPPINGS=(
 	"stats.html:stats/index.html"
 	"paymaster.html:docs/paymaster.html"
 	"panel.html:panel/index.html"
+	"privacy.html:privacy.html"
+	"terms.html:terms.html"
 )
 
 echo "Publishing docs from ${REMOTE}:${SRC}/docs to ${REMOTE}:${WEB_ROOT}"

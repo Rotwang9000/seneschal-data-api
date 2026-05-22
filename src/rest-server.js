@@ -80,6 +80,10 @@ import {
 	WATCH_CONSTANTS
 } from './private-watch.js';
 import { deliverWebhook } from './private-watch-poller.js';
+import {
+	registerCustomTopupRoute,
+	CUSTOM_TOPUP_LIMITS
+} from './private-watch-custom.js';
 
 const ONE_HOUR_MS = 60 * 60 * 1000;
 const ONE_DAY_MS = 24 * ONE_HOUR_MS;
@@ -236,6 +240,7 @@ export async function buildApp(options = {}) {
 			'POST /v1/private/topup (x402 paywall — $0.10 credit top-up)',
 			'POST /v1/private/topup-1 (x402 paywall — $1.00 credit top-up)',
 			'POST /v1/private/topup-5 (x402 paywall — $5.00 credit top-up)',
+			'POST /v1/private/topup-custom (x402 paywall — variable credit amount, 0.10 – 25.00 USDC)',
 			'POST /v1/private/historical (x402 paywall — one-off spendable+spent note scan)',
 			'POST /v1/private/derive-viewkey (free, rate-limited — Zcash UFVK from BIP-39 mnemonic)',
 			'GET /v1/private/watch/:id (owner-only, free poll)',
@@ -356,6 +361,15 @@ export async function buildApp(options = {}) {
 					price_topup_1: routes['POST /v1/private/topup-1']?.accepts?.price ?? null,
 					price_topup_5: routes['POST /v1/private/topup-5']?.accepts?.price ?? null,
 					price_historical: routes['POST /v1/private/historical']?.accepts?.price ?? null,
+					// Variable-amount top-ups live alongside the three
+					// fixed tiers. Surface the bounds so the in-browser
+					// slider can clamp client-side without a separate
+					// fetch.
+					topup_custom: {
+						min_atomic: String(CUSTOM_TOPUP_LIMITS.MIN_ATOMIC),
+						max_atomic: String(CUSTOM_TOPUP_LIMITS.MAX_ATOMIC),
+						step_atomic: String(CUSTOM_TOPUP_LIMITS.MIN_ATOMIC)
+					},
 					rate_per_day_atomic: String(WATCH_CONSTANTS.DAY_RATE_ATOMIC),
 					rate_per_call_atomic: String(WATCH_CONSTANTS.CALL_RATE_ATOMIC),
 					low_credit_threshold_atomic: String(WATCH_CONSTANTS.LOW_CREDIT_THRESHOLD_ATOMIC),
@@ -776,6 +790,20 @@ export async function buildApp(options = {}) {
 			};
 		});
 	}
+
+	// Variable-amount top-up. Bypasses @x402/fastify (which can
+	// only express fixed prices) and hand-rolls the challenge /
+	// verify / settle dance against the same facilitator URL.
+	// Implemented in private-watch-custom.js so this file stays
+	// under the 1500-line refactor cliff.
+	registerCustomTopupRoute(app, {
+		watchDb,
+		x402Cfg,
+		requirePaywall,
+		privateWatchReady,
+		privateNotConfigured,
+		log: app.log
+	});
 
 	// One-off historical scan. The view key is forwarded to NFPT in
 	// memory and never written to disk; the route returns the

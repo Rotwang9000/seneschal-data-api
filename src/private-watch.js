@@ -724,6 +724,12 @@ export function buildPrivateInfo({ x402Cfg, nfptHealth, requireHttps = false }) 
 				{ path: 'POST /v1/private/topup-1', price: priceOf('POST /v1/private/topup-1'), credit_atomic: String(WATCH_CONSTANTS.TOPUP_1_ATOMIC) },
 				{ path: 'POST /v1/private/topup-5', price: priceOf('POST /v1/private/topup-5'), credit_atomic: String(WATCH_CONSTANTS.TOPUP_5_ATOMIC) }
 			],
+			topup_custom: {
+				path: 'POST /v1/private/topup-custom',
+				price: 'variable (your choice within bounds)',
+				body: '{ watchId, watchToken, amountAtomic } where amountAtomic is between 100_000 and 25_000_000 (0.10 – 25.00 USDC)',
+				note: 'lets a UI present a slider rather than three fixed tiers; same credit math, same webhook contract'
+			},
 			historical_lookup: {
 				path: 'POST /v1/private/historical',
 				price: priceOf('POST /v1/private/historical'),

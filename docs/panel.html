@@ -84,6 +84,38 @@ button.action:disabled { background: #b29be0; cursor: progress }
 button.action.ghost { background: transparent; color: var(--brand); border: 1px solid var(--brand); padding: 0.5em 1em }
 button.action.ghost:hover { background: #eaf3fc }
 
+/* Slider — used for amount selection on New Watch + Credit tabs.
+   Native range input styled to match the brand. The bubble above
+   the thumb shows the live USD value as the user drags. */
+.slider-row { display: flex; align-items: center; gap: 0.8em; margin: 0.4em 0 0.2em; flex-wrap: wrap }
+.slider-row input[type=range] { flex: 1 1 250px; min-width: 200px; height: 6px; appearance: none; background: #e6ecf5; border-radius: 6px; outline: none }
+.slider-row input[type=range]::-webkit-slider-thumb { appearance: none; width: 22px; height: 22px; border-radius: 50%; background: var(--brand); border: 2px solid #fff; box-shadow: 0 0 0 1px rgba(0,0,0,.1); cursor: grab }
+.slider-row input[type=range]::-moz-range-thumb { width: 22px; height: 22px; border-radius: 50%; background: var(--brand); border: 2px solid #fff; cursor: grab }
+.slider-row input[type=range]:focus::-webkit-slider-thumb { box-shadow: 0 0 0 3px rgba(20,98,179,.25) }
+.slider-row.free input[type=range]::-webkit-slider-thumb { background: var(--accent) }
+.slider-row.free input[type=range]::-moz-range-thumb { background: var(--accent) }
+.slider-value { display: inline-flex; align-items: baseline; gap: 0.3em; min-width: 7em; font-weight: 700; color: var(--brand); padding: 0.25em 0.7em; border: 1px solid var(--card-border); border-radius: 4px; background: #fff }
+.slider-value .unit { font-weight: 400; color: var(--muted); font-size: 0.85em }
+.slider-value .days { font-weight: 400; color: var(--muted); font-size: 0.78em; margin-left: 0.4em }
+.slider-presets { display: flex; gap: 0.3em; flex-wrap: wrap }
+.slider-presets button { background: var(--soft); border: 1px solid var(--card-border); color: var(--ink); padding: 0.25em 0.65em; border-radius: 3px; font: inherit; font-size: 0.82em; cursor: pointer }
+.slider-presets button:hover { background: var(--soft-2) }
+.slider-presets button.active { background: var(--brand); color: #fff; border-color: var(--brand) }
+.slider-hint { color: var(--muted); font-size: 0.85em; margin-top: 0.4em }
+
+/* Credit summary card — top of the Credit tab */
+.credit-summary { background: linear-gradient(135deg, #f4f8fd 0%, #ecf2f9 100%); border: 1px solid var(--card-border); border-radius: 8px; padding: 0.9em 1.1em; margin: 0.5em 0 1em; display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 0.8em }
+.credit-summary .num { font-size: 1.4em; font-weight: 700; color: var(--brand); display: block }
+.credit-summary .lbl { color: var(--muted); font-size: 0.85em; text-transform: uppercase; letter-spacing: 0.04em; display: block; margin-bottom: 0.1em }
+
+/* Credit tab — per-watch row card */
+.watch-card { border: 1px solid var(--card-border); border-radius: 6px; padding: 0.8em 1em; margin: 0.6em 0; background: #fff }
+.watch-card h4 { margin: 0 0 0.3em; font-size: 0.95em }
+.watch-card .meta { color: var(--muted); font-size: 0.85em; font-family: ui-monospace, monospace }
+.watch-card .bar { height: 8px; background: #e6ecf5; border-radius: 4px; margin: 0.5em 0; overflow: hidden }
+.watch-card .bar > div { height: 100%; background: linear-gradient(90deg, var(--good) 0%, var(--brand) 70%, var(--warn) 100%); transition: width 0.3s }
+.watch-card .bar.low > div { background: var(--warn) }
+
 /* Result + equivalent-API box ------------------------------------ */
 .result { background: #fff; border: 1px solid var(--card-border); border-radius: 4px; padding: 0.8em 1em; margin-top: 0.9em; word-break: break-all }
 .result.success { border-left: 4px solid var(--good); background: #eafaef }
@@ -126,7 +158,7 @@ footer { color: var(--muted); font-size: 0.9em; margin-top: 3em; padding-top: 1e
 <header class="bar">
 	<div style="flex:1 1 auto">
 		<h1>Seneschal Control Panel <span style="font-weight:400;color:#cfe3ff;font-size:0.85em;margin-left:0.5em">— Private Watch via WalletConnect</span></h1>
-		<span class="sub"><a href="https://seneschal.space/">Landing</a> · <a href="https://docs.seneschal.space/">Docs</a> · <a href="https://stats.seneschal.space/">Live stats</a> · <a href="https://api.seneschal.space/v1/private/info">/v1/private/info</a></span>
+		<span class="sub"><a href="https://seneschal.space/">Landing</a> · <a href="https://docs.seneschal.space/">Docs</a> · <a href="https://stats.seneschal.space/">Live stats</a> · <a href="https://api.seneschal.space/v1/private/info">/v1/private/info</a> · <a href="https://seneschal.space/terms.html">Terms</a> · <a href="https://seneschal.space/privacy.html">Privacy</a></span>
 	</div>
 	<div class="wallet" id="wallet-area">
 		<button id="connect-btn" type="button">Connect Wallet</button>
@@ -140,7 +172,8 @@ footer { color: var(--muted); font-size: 0.9em; margin-top: 3em; padding-top: 1e
 </div>
 
 <nav class="tabs" role="tablist">
-	<button type="button" class="tab active" data-tab="watch">New watch <span class="price">$0.10</span></button>
+	<button type="button" class="tab active" data-tab="watch">New watch <span class="price">$0.10+</span></button>
+	<button type="button" class="tab" data-tab="credit">Credit <span class="price" id="credit-tab-count">(0)</span></button>
 	<button type="button" class="tab" data-tab="watches">My watches <span class="price" id="watches-count">(0)</span></button>
 	<button type="button" class="tab" data-tab="historical">Historical lookup <span class="price">$0.50</span></button>
 	<button type="button" class="tab free" data-tab="derive">Derive viewkey <span class="price">FREE</span></button>
@@ -169,12 +202,27 @@ footer { color: var(--muted); font-size: 0.9em; margin-top: 3em; padding-top: 1e
 	<label class="field" for="w-birthday">Birthday height <span class="hint">optional; speeds up first scan if your wallet is recent</span></label>
 	<input type="number" id="w-birthday" placeholder="(leave blank for full scan)" min="0">
 
+	<label class="field">Starter credit <span class="hint">drag to choose how much credit to load up front (covers ~$0.02/UTC-day + $0.005/webhook)</span></label>
+	<div class="slider-row">
+		<input type="range" id="w-credit" min="10" max="2500" step="10" value="10" aria-label="starter credit in atomic USDC cents">
+		<span class="slider-value"><span id="w-credit-usd">$0.10</span><span class="unit">USDC</span><span class="days" id="w-credit-days">~5 days</span></span>
+	</div>
+	<div class="slider-presets" id="w-credit-presets">
+		<button type="button" data-cents="10" class="active">$0.10</button>
+		<button type="button" data-cents="50">$0.50</button>
+		<button type="button" data-cents="100">$1</button>
+		<button type="button" data-cents="500">$5</button>
+		<button type="button" data-cents="1000">$10</button>
+		<button type="button" data-cents="2500">$25</button>
+	</div>
+	<p class="slider-hint" id="w-credit-hint">$0.10 — 1 wallet signature.</p>
+
 	<button type="button" class="action" id="watch-submit">Pay $0.10 and create watch</button>
 	<div id="watch-result"></div>
 	<div class="api-box" id="watch-api">
 		<button class="copy" type="button" data-copy="watch-api-curl">Copy curl</button>
 		<h4>Equivalent API call</h4>
-		<span class="label">curl + your own x402 signer</span>
+		<span class="label">Step 1 — create the watch ($0.10 fixed)</span>
 <pre><code id="watch-api-curl">curl -s https://api.seneschal.space/v1/private/watch \
 	-X POST -H "content-type: application/json" \
 	-H "x-payment: &lt;base64 EIP-3009 payload, $0.10 USDC on Base&gt;" \
@@ -183,7 +231,14 @@ footer { color: var(--muted); font-size: 0.9em; margin-top: 3em; padding-top: 1e
 		"address": "44AFFq…",
 		"viewKey": "0123…",
 		"webhookUrl": "https://your.server/seneschal-hook"
-	}'</code></pre>
+	}'
+# returns { watchId, watchToken, webhookSecret, creditAtomic: "100000", ... }</code></pre>
+		<span class="label">Step 2 (optional) — add extra credit by ANY amount</span>
+<pre><code>curl -s -X POST https://api.seneschal.space/v1/private/topup-custom \
+	-H "x-payment: &lt;base64 EIP-3009 payload, $X.XX USDC on Base&gt;" \
+	-H "content-type: application/json" \
+	-d '{ "watchId": "…", "watchToken": "…", "amountAtomic": 900000 }'
+# 900000 atomic = $0.90 → total credit on the watch becomes $1.00</code></pre>
 		<span class="label">Node.js (x402-fetch wraps the payment flow)</span>
 <pre><code>import { wrapFetchWithPayment } from "x402-fetch";
 import { createWalletClient, http } from "viem";
@@ -195,10 +250,53 @@ const r = await fetchPaid("https://api.seneschal.space/v1/private/watch", {
 	headers: { "content-type": "application/json" },
 	body: JSON.stringify({ chain, address, viewKey, webhookUrl })
 });
-const { watchId, watchToken, webhookSecret } = await r.json();</code></pre>
+const { watchId, watchToken, webhookSecret } = await r.json();
+// then optionally:
+const t = await fetchPaid("https://api.seneschal.space/v1/private/topup-custom", {
+	method: "POST",
+	headers: { "content-type": "application/json" },
+	body: JSON.stringify({ watchId, watchToken, amountAtomic: 900_000 })
+});</code></pre>
 		<span class="label">MCP (for AI agents already in a paid session)</span>
 <pre><code>tool: seneschal_private_watch_create
 input: { chain, address, viewKey, webhookUrl }</code></pre>
+	</div>
+</section>
+
+<!-- ── Credit ─────────────────────────────────────────────────── -->
+<section class="panel" id="panel-credit">
+	<h2>Credit — view balances, top up by any amount</h2>
+	<p class="muted">Drag the slider per watch to choose any top-up amount from $0.10 to $25. One wallet signature per top-up, settled via <code>POST /v1/private/topup-custom</code>. The $0.10 / $1 / $5 fixed-tier buttons are still in <em>My watches</em> if you prefer a one-click flow.</p>
+	<div id="credit-summary" class="credit-summary"></div>
+	<div id="credit-list"></div>
+	<div id="credit-result"></div>
+	<div class="api-box">
+		<button class="copy" type="button" data-copy="credit-api-curl">Copy curl</button>
+		<h4>Equivalent API call — variable-amount top-up</h4>
+		<span class="label">curl + your own x402 signer</span>
+<pre><code id="credit-api-curl">curl -s -X POST https://api.seneschal.space/v1/private/topup-custom \
+	-H "x-payment: &lt;base64 EIP-3009 payload, $X.XX USDC on Base&gt;" \
+	-H "content-type: application/json" \
+	-d '{
+		"watchId":      "…",
+		"watchToken":   "…",
+		"amountAtomic": 250000
+	}'</code></pre>
+		<span class="label">Node.js (x402-fetch handles the dance)</span>
+<pre><code>import { wrapFetchWithPayment } from "x402-fetch";
+const fetchPaid = wrapFetchWithPayment(fetch, walletClient);
+const r = await fetchPaid("https://api.seneschal.space/v1/private/topup-custom", {
+	method: "POST",
+	headers: { "content-type": "application/json" },
+	body: JSON.stringify({ watchId, watchToken, amountAtomic: 250000 })
+});
+const { credit } = await r.json();</code></pre>
+		<span class="label">Notes</span>
+<pre><code>// amountAtomic is in atomic USDC (6 decimals): 100_000 = $0.10
+// Range: 100_000 (min) — 25_000_000 (max)
+// On 402 the server returns a `payment-required` header with the
+// challenge baked to your requested amount; sign exactly that or
+// the retry rejects with `amount_mismatch`.</code></pre>
 	</div>
 </section>
 
@@ -300,7 +398,7 @@ input: { chain, address, viewKey, webhookUrl }</code></pre>
 </section>
 
 <footer>
-	<p>Open-source on GitHub: <a href="https://github.com/Rotwang9000/seneschal-data-api">Rotwang9000/seneschal-data-api</a>. Contact <a href="https://t.me/OrknetP"><code>@OrknetP</code> on Telegram</a>. This panel is a thin convenience over the public REST API at <code>api.seneschal.space</code> — read <a href="https://docs.seneschal.space/#private-watch-detail">the docs</a> if you'd rather call it directly.</p>
+	<p>Open-source on GitHub: <a href="https://github.com/Rotwang9000/seneschal-data-api">Rotwang9000/seneschal-data-api</a>. Contact <a href="https://t.me/OrknetP"><code>@OrknetP</code> on Telegram</a>. This panel is a thin convenience over the public REST API at <code>api.seneschal.space</code> — read <a href="https://docs.seneschal.space/#private-watch-detail">the docs</a> if you'd rather call it directly. By using the panel you agree to the <a href="https://seneschal.space/terms.html">Terms</a> (notably: <strong>no refunds</strong>) and <a href="https://seneschal.space/privacy.html">Privacy policy</a>.</p>
 </footer>
 
 </main>
@@ -383,6 +481,7 @@ document.querySelectorAll("nav.tabs .tab").forEach((b) => {
 		b.classList.add("active");
 		$("panel-" + b.dataset.tab).classList.add("active");
 		if (b.dataset.tab === "watches") renderWatches();
+		if (b.dataset.tab === "credit")  renderCredit();
 	});
 });
 
@@ -598,7 +697,76 @@ function saveWatches(watches) {
 	$("watches-count").textContent = "(" + watches.length + ")";
 }
 
-$("watches-count").textContent = "(" + loadWatches().length + ")";
+function refreshWatchesCount() {
+	const n = loadWatches().length;
+	$("watches-count").textContent = "(" + n + ")";
+	$("credit-tab-count").textContent = "(" + n + ")";
+}
+refreshWatchesCount();
+
+// ── Slider helpers ─────────────────────────────────────────────
+// Atomic USDC per UTC-day at the idle rate ($0.02). Used for "~N
+// days" hints. Mirrors WATCH_CONSTANTS.DAY_RATE_ATOMIC server-side;
+// any divergence would be cosmetic only (the server is canonical).
+const DAY_RATE_ATOMIC = 20_000;
+
+function fmtDollars(cents) {
+	// `cents` here is 1/100 of a dollar (so cents=10 => $0.10). Used
+	// across the sliders. Atomic USDC = cents * 10_000.
+	const dollars = cents / 100;
+	return "$" + (cents % 100 === 0 ? dollars.toFixed(2) : dollars.toFixed(2));
+}
+function centsToAtomic(cents) { return BigInt(cents) * 10_000n; }
+function daysFromAtomic(atomic) {
+	const a = typeof atomic === "bigint" ? Number(atomic) : Number(atomic);
+	return Math.max(0, a / DAY_RATE_ATOMIC);
+}
+
+function bindSlider({ rangeId, usdId, daysId, presetsId, hintId, hintFn }) {
+	const range = $(rangeId);
+	const usdEl = $(usdId);
+	const daysEl = $(daysId);
+	const presetsEl = presetsId ? $(presetsId) : null;
+	const hintEl = hintId ? $(hintId) : null;
+	function paint() {
+		const cents = Number(range.value);
+		usdEl.textContent = fmtDollars(cents);
+		if (daysEl) daysEl.textContent = "~" + daysFromAtomic(centsToAtomic(cents)).toFixed(1) + " days";
+		if (presetsEl) {
+			presetsEl.querySelectorAll("button").forEach((b) => {
+				b.classList.toggle("active", Number(b.dataset.cents) === cents);
+			});
+		}
+		if (hintEl && hintFn) hintEl.textContent = hintFn(cents);
+	}
+	range.addEventListener("input", paint);
+	if (presetsEl) {
+		presetsEl.addEventListener("click", (e) => {
+			const btn = e.target.closest("button[data-cents]");
+			if (!btn) return;
+			range.value = btn.dataset.cents;
+			paint();
+		});
+	}
+	paint();
+	return { paint, getCents: () => Number(range.value), setCents: (c) => { range.value = c; paint(); } };
+}
+
+const watchSlider = bindSlider({
+	rangeId: "w-credit",
+	usdId: "w-credit-usd",
+	daysId: "w-credit-days",
+	presetsId: "w-credit-presets",
+	hintId: "w-credit-hint",
+	hintFn: (cents) => cents === 10
+		? "$0.10 — 1 wallet signature."
+		: `${fmtDollars(cents)} — 2 wallet signatures (create watch at $0.10, then top up with $${((cents-10)/100).toFixed(2)} via /v1/private/topup-custom).`
+});
+
+// Re-paint the submit button label as the slider moves.
+$("w-credit").addEventListener("input", () => {
+	$("watch-submit").textContent = `Pay ${fmtDollars(watchSlider.getCents())} and create watch`;
+});
 
 // ── New watch tab handler ───────────────────────────────────────
 $("watch-submit").addEventListener("click", async () => {
@@ -616,40 +784,62 @@ $("watch-submit").addEventListener("click", async () => {
 		return;
 	}
 	if (!state.account) { setResult("watch-result", "info", "<label>Connect a wallet first</label>The x402 payment needs a signer."); return; }
+	const desiredCents = watchSlider.getCents();
+	const extraCents = desiredCents - 10;
 	clearResult("watch-result");
 	btn.disabled = true; btn.textContent = "Signing $0.10 payment…";
 	try {
 		const r = await payX402("POST", "/v1/private/watch", body);
-		if (r.status >= 200 && r.status < 300) {
-			const w = r.body;
-			const watches = loadWatches();
-			watches.unshift({
-				id: w.watchId, token: w.watchToken,
-				webhookSecret: w.webhookSecret,
-				chain: body.chain, address: body.address,
-				webhookUrl: body.webhookUrl,
-				createdAt: Date.now()
-			});
-			saveWatches(watches);
-			setResult("watch-result", "success",
-				`<label>Watch created</label>
-				<div class="kv">watchId: ${esc(w.watchId)}<br>
-				watchToken: ${esc(w.watchToken)} <span class="muted">(saved to this browser only)</span><br>
-				webhookSecret: ${esc(w.webhookSecret)} <span class="muted">(use to verify HMAC-SHA256 signatures on incoming webhooks)</span><br>
-				credit: ${esc(w.creditAtomic ?? "100000")} atomic USDC (~5 idle days)</div>`);
-			// Reset just the form, keep the wallet connected.
-			["w-address","w-viewkey","w-webhook","w-birthday"].forEach((id) => { $(id).value = ""; });
-			refreshWallet();
-		}
-		else {
+		if (!(r.status >= 200 && r.status < 300)) {
 			setResult("watch-result", "error", `<label>Error ${esc(r.status)}</label>${esc(r.body?.error?.message ?? JSON.stringify(r.body))}`);
+			return;
 		}
+		const w = r.body;
+		const watches = loadWatches();
+		watches.unshift({
+			id: w.watchId, token: w.watchToken,
+			webhookSecret: w.webhookSecret,
+			chain: body.chain, address: body.address,
+			webhookUrl: body.webhookUrl,
+			createdAt: Date.now()
+		});
+		saveWatches(watches);
+		let extraMsg = "";
+		if (extraCents > 0) {
+			btn.textContent = `Signing $${(extraCents/100).toFixed(2)} top-up…`;
+			try {
+				const topupBody = {
+					watchId: w.watchId,
+					watchToken: w.watchToken,
+					amountAtomic: String(centsToAtomic(extraCents))
+				};
+				const t = await payX402("POST", "/v1/private/topup-custom", topupBody);
+				if (t.status >= 200 && t.status < 300) {
+					extraMsg = `<br><span class="muted">Plus extra ${fmtDollars(extraCents)} top-up via /v1/private/topup-custom — credit now ${esc(fmtUsd(t.body?.credit?.remaining_atomic))} (~${esc((t.body?.credit?.days_remaining ?? 0).toFixed(1))} days).</span>`;
+				}
+				else {
+					extraMsg = `<br><span style="color:var(--warn)">Watch was created but the additional ${fmtDollars(extraCents)} top-up failed (${esc(t.status)}). Top up later from the Credit tab.</span>`;
+				}
+			} catch (err) {
+				extraMsg = `<br><span style="color:var(--warn)">Watch was created but the additional ${fmtDollars(extraCents)} top-up failed: ${esc(err?.message ?? err)}. Top up later from the Credit tab.</span>`;
+			}
+		}
+		setResult("watch-result", "success",
+			`<label>Watch created</label>
+			<div class="kv">watchId: ${esc(w.watchId)}<br>
+			watchToken: ${esc(w.watchToken)} <span class="muted">(saved to this browser only)</span><br>
+			webhookSecret: ${esc(w.webhookSecret)} <span class="muted">(use to verify HMAC-SHA256 signatures on incoming webhooks)</span><br>
+			starter credit: ${esc(w.creditAtomic ?? "100000")} atomic USDC</div>${extraMsg}`);
+		["w-address","w-viewkey","w-webhook","w-birthday"].forEach((id) => { $(id).value = ""; });
+		refreshWatchesCount();
+		refreshWallet();
 	}
 	catch (err) {
 		setResult("watch-result", "error", `<label>Failed</label>${esc(err?.message ?? String(err))}`);
 	}
 	finally {
-		btn.disabled = false; btn.textContent = "Pay $0.10 and create watch";
+		btn.disabled = false;
+		btn.textContent = `Pay ${fmtDollars(watchSlider.getCents())} and create watch`;
 	}
 });
 
@@ -791,6 +981,126 @@ async function onWatchAction(act, id) {
 }
 
 $("watches-refresh").addEventListener("click", renderWatches);
+
+// ── Credit tab handler ────────────────────────────────────────
+// One slider per watch. Picks an atomic USDC amount in $0.10 steps
+// from $0.10 to $25, hits /v1/private/topup-custom with that
+// amount, and updates the row + summary on success.
+async function renderCredit() {
+	refreshWatchesCount();
+	const watches = loadWatches();
+	const sumEl = $("credit-summary");
+	const listEl = $("credit-list");
+	if (!watches.length) {
+		sumEl.innerHTML = "";
+		listEl.innerHTML = '<div class="empty">No watches saved in this browser yet. Create one on the <a href="#" data-jump="watch">New watch</a> tab.</div>';
+		bindJumpLinks();
+		return;
+	}
+	// Pre-render skeleton + summary placeholders. We fetch the
+	// statuses in parallel and patch in the credit numbers as
+	// each lands — same pattern as renderWatches.
+	sumEl.innerHTML = `
+		<div><span class="lbl">Watches</span><span class="num">${watches.length}</span></div>
+		<div><span class="lbl">Total credit</span><span class="num" id="credit-sum-total">…</span></div>
+		<div><span class="lbl">Lowest balance</span><span class="num" id="credit-sum-low">…</span></div>
+		<div><span class="lbl">Avg days left</span><span class="num" id="credit-sum-days">…</span></div>
+	`;
+	const cards = watches.map((w) => {
+		const idAttr = esc(w.id);
+		return `
+		<div class="watch-card" id="credit-card-${idAttr}">
+			<h4>${esc(w.chain)} · ${esc(w.address.slice(0, 18))}…</h4>
+			<div class="meta">${esc(w.id)}</div>
+			<div id="credit-state-${idAttr}" class="meta" style="margin-top:0.4em">loading…</div>
+			<div class="bar" id="credit-bar-${idAttr}"><div style="width:0%"></div></div>
+			<div class="slider-row" style="margin-top:0.8em">
+				<input type="range" min="10" max="2500" step="10" value="100" id="credit-range-${idAttr}" aria-label="top-up amount in atomic USDC cents">
+				<span class="slider-value"><span id="credit-usd-${idAttr}">$1.00</span><span class="unit">USDC</span><span class="days" id="credit-days-${idAttr}">+~50 days</span></span>
+			</div>
+			<div class="slider-presets" id="credit-presets-${idAttr}">
+				<button type="button" data-cents="10">+$0.10</button>
+				<button type="button" data-cents="50">+$0.50</button>
+				<button type="button" data-cents="100" class="active">+$1</button>
+				<button type="button" data-cents="500">+$5</button>
+				<button type="button" data-cents="1000">+$10</button>
+				<button type="button" data-cents="2500">+$25</button>
+			</div>
+			<button type="button" class="action" data-act="credit-topup" data-id="${idAttr}" style="margin-top:0.6em">Top up $1.00</button>
+		</div>`;
+	}).join("");
+	listEl.innerHTML = cards;
+	// Wire each card's slider + button.
+	const totals = { atomic: 0, lowAtomic: Infinity, daysSum: 0, daysCount: 0 };
+	for (const w of watches) {
+		const id = w.id;
+		const sliderApi = bindSlider({
+			rangeId: "credit-range-" + id,
+			usdId: "credit-usd-" + id,
+			daysId: "credit-days-" + id,
+			presetsId: "credit-presets-" + id
+		});
+		const btn = listEl.querySelector(`button[data-act="credit-topup"][data-id="${CSS.escape(id)}"]`);
+		btn.addEventListener("click", async () => {
+			if (!state.account) { setResult("credit-result", "info", "<label>Connect a wallet first</label>"); return; }
+			const cents = sliderApi.getCents();
+			const amountAtomic = centsToAtomic(cents);
+			btn.disabled = true; btn.textContent = `Signing ${fmtDollars(cents)} payment…`;
+			try {
+				const r = await payX402("POST", "/v1/private/topup-custom", {
+					watchId: w.id, watchToken: w.token,
+					amountAtomic: String(amountAtomic)
+				});
+				if (r.status >= 200 && r.status < 300) {
+					const c = r.body?.credit ?? {};
+					setResult("credit-result", "success", `<label>Topped up ${esc(fmtDollars(cents))}</label>${esc(w.chain)} · ${esc(w.id.slice(0,8))}… now at ${esc(fmtUsd(c.remaining_atomic))} (~${esc((c.days_remaining ?? 0).toFixed(1))} days).`);
+					renderCredit();
+					refreshWallet();
+				} else {
+					setResult("credit-result", "error", `<label>Top-up failed (${esc(r.status)})</label>${esc(r.body?.error?.message ?? JSON.stringify(r.body))}`);
+				}
+			}
+			catch (err) {
+				setResult("credit-result", "error", `<label>Top-up failed</label>${esc(err?.message ?? err)}`);
+			}
+			finally {
+				btn.disabled = false;
+				btn.textContent = `Top up ${fmtDollars(sliderApi.getCents())}`;
+			}
+		});
+		// Repaint the button label as the slider moves.
+		$("credit-range-" + id).addEventListener("input", () => {
+			btn.textContent = `Top up ${fmtDollars(sliderApi.getCents())}`;
+		});
+		// Fetch the live status to populate the bar + meta.
+		fetchStatus(w).then((status) => {
+			const stateEl = $("credit-state-" + id);
+			const barEl = $("credit-bar-" + id);
+			if (!stateEl) return;
+			if (status.error) {
+				stateEl.innerHTML = `<span style="color:var(--danger)">${esc(status.error)}</span>`;
+				return;
+			}
+			const credit = status.credit ?? {};
+			const remaining = Number(credit.remaining_atomic ?? 0);
+			const startAtomic = Number(credit.starter_atomic ?? remaining ?? 1) || 1;
+			const days = Number(credit.days_remaining ?? 0);
+			const isLow = Boolean(credit.low_credit);
+			const pct = Math.min(100, Math.max(0, (remaining / startAtomic) * 100));
+			stateEl.innerHTML = `Balance ${esc(fmtUsd(remaining))} (~${days.toFixed(1)} days remaining) · webhook deliveries: ${esc(credit.deliveries ?? "?")}${isLow ? ' · <span style="color:var(--warn)">⚠ LOW</span>' : ""}`;
+			barEl.classList.toggle("low", isLow);
+			barEl.firstElementChild.style.width = pct + "%";
+			totals.atomic += remaining;
+			if (remaining < totals.lowAtomic) totals.lowAtomic = remaining;
+			totals.daysSum += days;
+			totals.daysCount += 1;
+			// Refresh the summary tile each time.
+			$("credit-sum-total").textContent = fmtUsd(totals.atomic);
+			$("credit-sum-low").textContent   = totals.lowAtomic === Infinity ? "?" : fmtUsd(totals.lowAtomic);
+			$("credit-sum-days").textContent  = totals.daysCount === 0 ? "?" : (totals.daysSum / totals.daysCount).toFixed(1) + "d";
+		});
+	}
+}
 
 $("watches-export").addEventListener("click", () => {
 	const data = JSON.stringify(loadWatches(), null, 2);

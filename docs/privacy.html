@@ -1,0 +1,124 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Privacy policy — Seneschal</title>
+<meta name="description" content="Privacy policy for the Seneschal Private Watch service. Anonymous-by-design, GDPR-compliant, no cookies, no analytics, no accounts. Plain-English explanation of what data we collect, why, how long we keep it, and your rights under UK GDPR / EU GDPR.">
+<style>
+:root { --brand:#1462b3; --brand-deep:#0d3a6d; --ink:#161616; --muted:#6b6b6b; --warn:#b35900; --soft:#f4f6fb; --card-border:#d9e0ec; }
+* { box-sizing: border-box }
+html, body { background: #fdfdfc; color: var(--ink); margin: 0 }
+body { font: 16px/1.6 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; max-width: 50em; margin: 0 auto; padding: 1.4em 1.2em 4em }
+h1 { font-weight: 600; font-size: 1.6em; margin: 0 0 0.1em; color: var(--brand-deep) }
+h2 { font-weight: 600; font-size: 1.15em; margin: 1.6em 0 0.4em; color: var(--brand-deep); border-bottom: 1px solid var(--card-border); padding-bottom: 0.25em }
+h3 { font-weight: 600; font-size: 0.97em; margin: 1em 0 0.3em }
+code { font-family: ui-monospace, "JetBrains Mono", Menlo, Consolas, monospace; background: var(--soft); padding: 1px 5px; border-radius: 3px; font-size: 0.92em }
+a { color: var(--brand) }
+.lead { color: var(--muted); margin: 0.2em 0 1em; font-size: 0.97em }
+.meta { color: var(--muted); font-size: 0.88em }
+.callout { background: #fff8e6; border: 1px solid #e8d6a3; border-left: 4px solid var(--warn); padding: 0.6em 0.9em; border-radius: 4px; margin: 0.7em 0; font-size: 0.93em; color: #5a3d00 }
+.callout.info { background: #eaf3fc; border-color: #bcd4ed; border-left-color: var(--brand); color: var(--brand-deep) }
+table { border-collapse: collapse; width: 100%; margin: 0.6em 0; font-size: 0.93em }
+table th, table td { border: 1px solid var(--card-border); padding: 0.45em 0.7em; vertical-align: top; text-align: left }
+table th { background: var(--soft); font-weight: 600 }
+ul, ol { padding-left: 1.4em }
+li { margin: 0.2em 0 }
+nav.top { font-size: 0.9em; margin-bottom: 0.4em }
+nav.top a { color: var(--brand); margin-right: 0.6em; text-decoration: none; border-bottom: 1px dotted var(--brand) }
+footer { color: var(--muted); font-size: 0.88em; margin-top: 3em; padding-top: 1em; border-top: 1px solid var(--card-border) }
+</style>
+</head>
+<body>
+
+<nav class="top">
+	<a href="https://seneschal.space/">Landing</a>·
+	<a href="https://docs.seneschal.space/">Docs</a>·
+	<a href="https://panel.seneschal.space/">Control panel</a>·
+	<a href="https://stats.seneschal.space/">Live stats</a>·
+	<a href="/terms.html">Terms</a>
+</nav>
+
+<h1>Privacy policy</h1>
+<p class="meta">Effective 2026-05-22. Service operated under the brand name <strong>Seneschal</strong>.</p>
+
+<div class="callout info"><strong>Short version.</strong> We don&rsquo;t want your data. We store the minimum needed to deliver the service you paid for, encrypt the sensitive bits at rest, share with no one except the openx402 payment facilitator and the webhook endpoint <em>you</em> chose, and delete it all when you cancel. No cookies, no analytics, no accounts, no email, no name.</p></div>
+
+<h2>1. Who we are</h2>
+<p>Seneschal is an anonymous, open-source operator of an Ethereum block builder plus a small bundle of paid data services (Private Watch, premium liquidation feeds, agent-payable single-fact endpoints). The natural person behind it operates pseudonymously as <code>Rotwang9000</code>. There is no registered company.</p>
+<p>The lawful basis for processing your data is <strong>performance of a contract</strong> under <a href="https://gdpr-info.eu/art-6-gdpr/">Article 6(1)(b) UK GDPR / EU GDPR</a>: when you pay for a Private Watch, top up credit, or run a historical scan we hold what we need to deliver that. A secondary basis of <strong>legitimate interest</strong> covers transient processing such as IP-based rate limiting on the free derive-viewkey endpoint.</p>
+<h3>Contact for privacy requests</h3>
+<p><a href="https://t.me/OrknetP"><code>@OrknetP</code> on Telegram</a> is the operator&rsquo;s private channel for messages about the service, including privacy queries.</p>
+
+<h2>2. Data we process</h2>
+
+<table>
+<thead><tr><th>Data</th><th>Why</th><th>Where</th><th>Retention</th></tr></thead>
+<tbody>
+<tr><td>Monero / Zcash address you ask us to watch</td><td>So the poller can match incoming transactions on the chain.</td><td>Encrypted SQLite at rest (server-side), TLS in transit.</td><td>Deleted when the watch is cancelled, runs out of credit, or hits the 90-day maximum lifetime. Hard-deleted within 30 days of any of those events.</td></tr>
+<tr><td>View key (XMR secret view key / ZEC Unified Full Viewing Key)</td><td>Required to detect inbound transactions; <strong>read-only</strong>, cannot spend.</td><td>Encrypted at rest with <strong>AES-256-GCM</strong> using an operator-held master key; never written to logs.</td><td>Same as the watch row. On cancellation the ciphertext is overwritten and the row deleted.</td></tr>
+<tr><td>Webhook URL</td><td>Where to POST signed events when funds land.</td><td>Plain text in SQLite (it&rsquo;s an HTTP(S) endpoint, not a secret).</td><td>Same as the watch row.</td></tr>
+<tr><td>Watch token / webhook secret (random)</td><td>Authenticate management calls and let you verify webhook bodies via HMAC-SHA256.</td><td>SHA-256 hash only in SQLite; the cleartext is shown once at creation and never persisted server-side.</td><td>Same as the watch row.</td></tr>
+<tr><td>Payer wallet address (your USDC sender)</td><td>Visible on the Base blockchain as part of the on-chain payment; we don&rsquo;t store an off-chain copy.</td><td>Public chain (not us).</td><td>Forever on-chain. Not joined to a personal identity by us.</td></tr>
+<tr><td>BIP-39 seed phrase</td><td>Only on <code>/v1/private/derive-viewkey</code>, which transforms it into a viewing key and discards.</td><td><strong>Memory only.</strong> Never written to disk, never logged. The free derive endpoint is a transient calculator.</td><td>Zero — discarded the moment the response is returned.</td></tr>
+<tr><td>IP address</td><td>Rate-limit the free derive endpoint (6/min/IP). Block obvious abuse on paid endpoints.</td><td>Process memory of the Fastify rate-limit plugin.</td><td>Sliding 1-minute window for derive; 30-day journald log retention for the access log.</td></tr>
+<tr><td>Webhook delivery logs</td><td>Diagnostics so a failed delivery can be reported back to the watch owner.</td><td>journald + structured Pino logs on the same host.</td><td>30 days, then rotated out.</td></tr>
+<tr><td>Aggregated counters (number of watches, total credit, …)</td><td>Powers <a href="https://stats.seneschal.space/">stats.seneschal.space</a>. Aggregates only — no per-watch detail.</td><td>SQLite snapshots refreshed periodically.</td><td>Indefinitely as aggregate numbers — never re-derivable into personal data.</td></tr>
+</tbody>
+</table>
+
+<div class="callout"><strong>What we do not collect.</strong> No name, no email, no phone number, no payment card, no government ID, no browser fingerprint, no cookies, no analytics, no third-party trackers. <code>panel.seneschal.space</code> loads JavaScript modules from <code>esm.sh</code> (a JS CDN); that CDN sees your IP for the duration of the script fetch but receives no other data from us about you. We do not embed Google, Cloudflare Analytics, Plausible, Matomo, or any other analytics product.</p></div>
+
+<h2>3. Cookies and local storage</h2>
+<p>We do not set any cookies on any subdomain. <code>panel.seneschal.space</code> writes your watch identifiers (<code>watchId</code>, <code>watchToken</code>, <code>webhookSecret</code>) to your browser&rsquo;s <code>localStorage</code> so you can come back later, top up, or cancel. This is treated as <em>strictly necessary</em> storage under PECR / ePrivacy because without it the panel cannot function for you across reloads — but it is your browser&rsquo;s storage, not ours, and nothing in it is ever sent to us automatically. You can clear it from the browser&rsquo;s site-data tool at any time; the panel also offers an <em>Export</em> button so you can keep a JSON backup before clearing.</p>
+
+<h2>4. Who we share data with</h2>
+<ul>
+	<li><strong>openx402 facilitator</strong> (<a href="https://facilitator.openx402.ai">facilitator.openx402.ai</a>). Verifies and settles your USDC payments on Base. Sees the payer address (you), the recipient address (us), the amount, and your signature. Does <em>not</em> see your view key, address, or webhook URL.</li>
+	<li><strong>Your webhook endpoint.</strong> When funds land we POST a signed JSON body to the URL you gave us. You control that endpoint; we&rsquo;re a sender, not a controller.</li>
+	<li><strong>The local NFPT scanner</strong> (a Monero / Zcash full-node front-end we operate on the same machine). Receives your view key and address in memory in order to scan. Same retention as the watch row.</li>
+	<li><strong>Court orders or other lawfully binding requests.</strong> We will comply if and only if we receive a valid order in our operating jurisdiction (England &amp; Wales, see Terms §15). Because we deliberately don&rsquo;t collect identity data, there is usually nothing on you to hand over.</li>
+</ul>
+<p>We do <strong>not</strong> sell, rent, lease, or barter your data. We have no advertising partners. We have no &ldquo;data analytics&rdquo; partners. We do not enrich your data against third-party data brokers.</p>
+
+<h2>5. International transfers</h2>
+<p>Our server lives in the EU (Netherlands). The openx402 facilitator may be hosted outside the UK / EEA; transferring payment metadata to it falls under Article 49(1)(b) UK GDPR (<em>transfer necessary for performance of a contract</em>) and is limited to the payer/recipient/amount/signature tuple needed to verify the payment.</p>
+
+<h2>6. Security</h2>
+<ul>
+	<li>All public endpoints served over TLS 1.3 (HSTS pinned).</li>
+	<li>View keys encrypted at rest with AES-256-GCM; encryption key held in environment of the API process, never in the database.</li>
+	<li>Webhook bodies signed with HMAC-SHA256 using a per-watch secret so you can detect tampering.</li>
+	<li>Webhook URL validated for SSRF (private / cloud-metadata / link-local addresses rejected; DNS resolution re-checked).</li>
+	<li>Free endpoints rate-limited to deter scraping (6/min/IP on derive-viewkey).</li>
+	<li>Database file permissions restricted to the API service user.</li>
+	<li>Code is open-source on GitHub (<a href="https://github.com/Rotwang9000/seneschal-data-api">Rotwang9000/seneschal-data-api</a>) so the security claims can be audited.</li>
+</ul>
+
+<h2>7. Your rights</h2>
+<p>Because you do not give us identifying information, the practical mechanism for most rights is your <code>watchId</code> + <code>watchToken</code>. With those you can:</p>
+<ul>
+	<li><strong>Access (Art. 15).</strong> Call <code>GET /v1/private/watch/&lt;watchId&gt;</code> with <code>x-watch-token</code> to see every field we hold for that watch.</li>
+	<li><strong>Rectification (Art. 16).</strong> Webhook URLs and birthday heights can be updated via the same endpoint family.</li>
+	<li><strong>Erasure (Art. 17).</strong> Call <code>DELETE /v1/private/watch/&lt;watchId&gt;</code> with <code>x-watch-token</code>. The row is hard-deleted within 30 days; the credit balance is forfeited per Terms §6.</li>
+	<li><strong>Portability (Art. 20).</strong> The access response is machine-readable JSON. The control panel also has an <em>Export JSON</em> button.</li>
+	<li><strong>Restriction / objection (Arts. 18, 21).</strong> Same as erasure in practice; we have no marketing or profiling to restrict.</li>
+	<li><strong>Lodge a complaint.</strong> UK residents can complain to the <a href="https://ico.org.uk/make-a-complaint/">ICO</a>; EU residents to their national DPA.</li>
+</ul>
+<p>If you have lost your <code>watchToken</code> we genuinely cannot identify you to satisfy a request — the token is hashed before storage. Reach out via Telegram and we will explain what evidence (e.g. a signature from the payer wallet) might let us help anyway.</p>
+
+<h2>8. Automated decision-making</h2>
+<p>None. There is no profiling. The poller is a deterministic balance-diff job; nothing it does qualifies as automated decision-making under Article 22 UK GDPR.</p>
+
+<h2>9. Children</h2>
+<p>The service is not directed at children under 16 and is not appropriate for them. We do not knowingly process data about children.</p>
+
+<h2>10. Changes to this policy</h2>
+<p>Any change is published on this page with a new effective date at the top. Material changes will also be noted in SYSTEM_BIBLE.md on GitHub (the public canonical changelog).</p>
+
+<footer>
+	<p>Operator contact: <a href="https://t.me/OrknetP"><code>@OrknetP</code> on Telegram</a>. Open source on GitHub: <a href="https://github.com/Rotwang9000/seneschal-data-api">Rotwang9000/seneschal-data-api</a>. See also the <a href="/terms.html">Terms of service</a>.</p>
+</footer>
+
+</body>
+</html>

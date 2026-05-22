@@ -1,0 +1,151 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Terms of service — Seneschal</title>
+<meta name="description" content="Terms of service for Seneschal Private Watch and the other paid data endpoints. Anonymous protocol, USDC payments on Base via x402, NO REFUNDS, best-effort delivery, governing law England &amp; Wales.">
+<style>
+:root { --brand:#1462b3; --brand-deep:#0d3a6d; --ink:#161616; --muted:#6b6b6b; --warn:#b35900; --soft:#f4f6fb; --card-border:#d9e0ec; --danger:#b3261e; }
+* { box-sizing: border-box }
+html, body { background: #fdfdfc; color: var(--ink); margin: 0 }
+body { font: 16px/1.6 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; max-width: 50em; margin: 0 auto; padding: 1.4em 1.2em 4em }
+h1 { font-weight: 600; font-size: 1.6em; margin: 0 0 0.1em; color: var(--brand-deep) }
+h2 { font-weight: 600; font-size: 1.15em; margin: 1.6em 0 0.4em; color: var(--brand-deep); border-bottom: 1px solid var(--card-border); padding-bottom: 0.25em }
+h3 { font-weight: 600; font-size: 0.97em; margin: 1em 0 0.3em }
+code { font-family: ui-monospace, "JetBrains Mono", Menlo, Consolas, monospace; background: var(--soft); padding: 1px 5px; border-radius: 3px; font-size: 0.92em }
+a { color: var(--brand) }
+.lead { color: var(--muted); margin: 0.2em 0 1em; font-size: 0.97em }
+.meta { color: var(--muted); font-size: 0.88em }
+.callout { background: #fff8e6; border: 1px solid #e8d6a3; border-left: 4px solid var(--warn); padding: 0.6em 0.9em; border-radius: 4px; margin: 0.7em 0; font-size: 0.93em; color: #5a3d00 }
+.callout.danger { background: #fdecea; border-color: #f5b5af; border-left-color: var(--danger); color: #7a1614 }
+.callout.info { background: #eaf3fc; border-color: #bcd4ed; border-left-color: var(--brand); color: var(--brand-deep) }
+ul, ol { padding-left: 1.4em }
+li { margin: 0.2em 0 }
+nav.top { font-size: 0.9em; margin-bottom: 0.4em }
+nav.top a { color: var(--brand); margin-right: 0.6em; text-decoration: none; border-bottom: 1px dotted var(--brand) }
+footer { color: var(--muted); font-size: 0.88em; margin-top: 3em; padding-top: 1em; border-top: 1px solid var(--card-border) }
+</style>
+</head>
+<body>
+
+<nav class="top">
+	<a href="https://seneschal.space/">Landing</a>·
+	<a href="https://docs.seneschal.space/">Docs</a>·
+	<a href="https://panel.seneschal.space/">Control panel</a>·
+	<a href="https://stats.seneschal.space/">Live stats</a>·
+	<a href="/privacy.html">Privacy</a>
+</nav>
+
+<h1>Terms of service</h1>
+<p class="meta">Effective 2026-05-22. By using any paid endpoint on <code>api.seneschal.space</code> or the control panel at <code>panel.seneschal.space</code> you agree to these terms.</p>
+
+<div class="callout danger"><strong>No refunds.</strong> All Seneschal payments settle on-chain through the openx402 facilitator. We cannot reverse a settled USDC transfer. There are no refunds for any reason, including but not limited to accidental cancellation, browser data loss, or buyer&rsquo;s remorse. Top up only what you need.</div>
+
+<h2>1. Definitions</h2>
+<ul>
+	<li><strong>&ldquo;Service&rdquo;</strong> &mdash; the Seneschal API at <code>api.seneschal.space</code>, the control panel at <code>panel.seneschal.space</code>, and the public documentation at <code>seneschal.space</code> / <code>docs.seneschal.space</code> / <code>stats.seneschal.space</code>.</li>
+	<li><strong>&ldquo;Watch&rdquo;</strong> &mdash; a Private Watch row created via <code>POST /v1/private/watch</code>, identified by a <code>watchId</code> and authenticated by a <code>watchToken</code>.</li>
+	<li><strong>&ldquo;Credit&rdquo;</strong> &mdash; the prepaid balance in atomic USDC units associated with a Watch. Decays at the rates published in <code>/v1/private/info</code>.</li>
+	<li><strong>&ldquo;Webhook&rdquo;</strong> &mdash; the signed HTTP POST we send to your URL when balance changes are detected.</li>
+	<li><strong>&ldquo;You&rdquo;</strong> &mdash; the person or entity using the Service.</li>
+	<li><strong>&ldquo;We&rdquo;</strong> / <strong>&ldquo;us&rdquo;</strong> &mdash; the operator of the Service, contactable via <a href="https://t.me/OrknetP"><code>@OrknetP</code> on Telegram</a>.</li>
+</ul>
+
+<h2>2. What the Service does</h2>
+<p>Private Watch monitors a Monero or Zcash address you specify, using a read-only view key you supply, and POSTs you a signed event whenever incoming balance changes. Historical lookups return spendable + spent note totals on demand. The derive-viewkey endpoint converts a BIP-39 phrase into a read-only Unified Full Viewing Key for free. The premium endpoints expose paid liquidation feeds and per-builder bid statistics for searchers.</p>
+<p>You can call the same endpoints from your own scripts. The control panel is a convenience UI; it has no privileged access.</p>
+
+<h2>3. No accounts, anonymous protocol</h2>
+<p>We do not maintain user accounts. Your sole credential is the <code>watchToken</code> we return at creation. If you lose it we cannot reset it; the Watch will keep running until cancelled, runs out of credit, or hits its maximum lifetime (90 days).</p>
+
+<h2>4. Eligibility &amp; acceptable use</h2>
+<p>By using the Service you represent that:</p>
+<ul>
+	<li>You have legal capacity to enter into a contract in your jurisdiction.</li>
+	<li>You are not located in, ordinarily resident in, or organised under the laws of, any jurisdiction subject to comprehensive UK / EU / UN / US trade sanctions.</li>
+	<li>You will only submit a view key for an address that <em>you control</em> or have <em>explicit consent to monitor</em>. Using the Service to surveil third parties without consent breaches these Terms and may breach the privacy laws of your country.</li>
+	<li>You will not use the Service to facilitate money laundering, terrorist financing, sanctions evasion, fraud, or any other illegal activity.</li>
+	<li>You will not abuse the free <code>derive-viewkey</code> endpoint to brute-force seed phrases or otherwise rate-limit-evade.</li>
+	<li>You will not attempt to reverse-engineer rate limits, exhaust resources, or interfere with the operation of the Service.</li>
+</ul>
+<p>We reserve the right to terminate any Watch or refuse service for breach of these acceptable-use terms, subject to §11 below.</p>
+
+<h2>5. Fees, billing &amp; the credit meter</h2>
+<ul>
+	<li>All prices are denominated in USDC on Base mainnet (CAIP-2 <code>eip155:8453</code>). Live prices are exposed at <a href="https://api.seneschal.space/v1/private/info"><code>/v1/private/info</code></a> and <a href="https://api.seneschal.space/.well-known/x402"><code>/.well-known/x402</code></a>.</li>
+	<li>Payments use the <a href="https://docs.x402.org">x402 protocol</a>: you sign an EIP-3009 <code>transferWithAuthorization</code>, the openx402 facilitator settles it on-chain, we credit your Watch.</li>
+	<li>Watches drain credit at a per-day idle rate plus a per-webhook delivery rate. Both rates are published in <code>/v1/private/info</code>. The rates may change with at least 7 days&rsquo; notice on this page; we will not retro-bill credit you have already prepaid.</li>
+	<li>A one-shot <code>low_credit</code> webhook fires when your balance falls below the documented threshold so you have time to top up before the Watch pauses.</li>
+	<li>Top-ups are available in fixed tiers ($0.10 / $1 / $5) and in any variable amount from $0.10 to $25 via <code>/v1/private/topup-custom</code> (also exposed via the control panel slider).</li>
+</ul>
+
+<div class="callout danger"><strong>No refunds, no chargebacks, no cancellations after settlement.</strong> Once an x402 payment has settled on-chain we have no protocol path back to your wallet. Credit balances on a cancelled Watch are forfeited. If you accidentally pay more than you intended you may use the Service against the surplus credit; there is no &ldquo;cash out&rdquo;. This non-refund clause is fundamental to the anonymous, account-free design and you accept it as a condition of use.</div>
+
+<h2>6. Service availability &amp; force majeure</h2>
+<p>The Service is provided on a <strong>best-effort</strong> basis with no service-level commitments. Realistically expect &gt;99% monthly availability based on operating history, but no SLA is given. Outages may occur for reasons including but not limited to:</p>
+<ul>
+	<li>Upstream node failures (Monero / Zcash / Ethereum RPC).</li>
+	<li>Facilitator or x402 protocol outages.</li>
+	<li>Network or hosting-provider failures.</li>
+	<li>Cryptocurrency network forks, reorganisations, or attacks.</li>
+	<li>Maintenance windows.</li>
+	<li>Force majeure events (acts of God, war, embargo, etc.).</li>
+</ul>
+<p>We will not be liable for service interruptions caused by any of the above. Credit does not accrue refunds during outages but the per-day idle billing is paused on Watches that are not being actively polled.</p>
+
+<h2>7. Webhook delivery</h2>
+<ul>
+	<li>Delivery is at-least-once. Your endpoint must be idempotent — verify the body, deduplicate on the included event id, and respond <code>2xx</code> within a reasonable timeout.</li>
+	<li>Persistent failures (e.g. consecutive <code>5xx</code> responses for an extended period) may cause us to back off or, after the documented retry budget is exhausted, pause delivery to that webhook. The Watch row remains and you can update the URL via the API.</li>
+	<li>Each webhook body is signed: <code>X-Seneschal-Signature: sha256=&lt;HMAC-SHA256(webhookSecret, raw-body)&gt;</code>. <strong>You</strong> are responsible for verifying that header before acting on the contents.</li>
+	<li>The endpoint URL must resolve to a public IPv4 / IPv6 address. Loopback, link-local, private RFC1918, RFC6598, and cloud-metadata addresses are rejected by SSRF guard.</li>
+</ul>
+
+<h2>8. View keys, addresses, seed phrases</h2>
+<ul>
+	<li>View keys are read-only by design; they cannot sign transactions or spend funds. We treat them as sensitive nonetheless and encrypt them at rest (see <a href="/privacy.html#section-6">Privacy §6</a>).</li>
+	<li>The <code>derive-viewkey</code> endpoint accepts your seed phrase, derives the UFVK in memory, and discards. We recommend the offline <a href="https://github.com/Rotwang9000/orchard-scanner">orchard-scanner</a> binary for any seed phrase you actually care about.</li>
+	<li>Historical scans stream your view key in memory only and never persist it.</li>
+</ul>
+
+<h2>9. Not financial / legal / tax advice</h2>
+<p>Nothing the Service produces or displays — notifications, historical totals, premium feeds, stats dashboards — constitutes financial, investment, accounting, legal, or tax advice. Treat all outputs as raw data and apply your own judgement.</p>
+
+<h2>10. Limitation of liability</h2>
+<p>To the maximum extent permitted by law:</p>
+<ul>
+	<li>The Service is provided <strong>&ldquo;AS IS&rdquo; and &ldquo;AS AVAILABLE&rdquo;</strong> without warranties of any kind, express or implied, including but not limited to merchantability, fitness for a particular purpose, accuracy, and non-infringement.</li>
+	<li>Our aggregate liability to you under or in connection with these Terms is capped at the total amount of USDC you have paid us in the twelve (12) months immediately preceding the event giving rise to the liability.</li>
+	<li>We are not liable for indirect, incidental, special, consequential, punitive, or exemplary damages, including lost profits, lost revenue, lost data, business interruption, or substitute-service costs, even if we have been advised of their possibility.</li>
+	<li>Nothing in these Terms excludes or limits liability that cannot lawfully be excluded or limited, in particular liability for death or personal injury caused by negligence and liability for fraud.</li>
+</ul>
+
+<h2>11. Suspension and termination</h2>
+<ul>
+	<li><strong>By you.</strong> You can cancel any Watch at any time via <code>DELETE /v1/private/watch/&lt;watchId&gt;</code> or the control panel. Forfeits remaining credit (§5).</li>
+	<li><strong>By us.</strong> We may suspend or terminate a Watch immediately if you breach §4 (acceptable use), if continuing to deliver the Service would expose us to legal risk, or for any reason if we cease operating the Service. Where we terminate for a reason other than your breach and the Watch still has unused credit, the credit is still not refundable (§5) — this is documented and accepted at point of purchase.</li>
+	<li><strong>Discontinuation of the Service.</strong> If we shut the Service down we will publish notice on this site and on GitHub at least 14 days in advance where reasonably practicable, but we are not obliged to refund unused credit. Open-source code remains available for self-hosting.</li>
+</ul>
+
+<h2>12. Privacy</h2>
+<p>See the <a href="/privacy.html">Privacy policy</a> for what we collect, why, retention windows, and your rights.</p>
+
+<h2>13. Intellectual property</h2>
+<p>The source code is published under the Apache-2.0 licence at <a href="https://github.com/Rotwang9000/seneschal-data-api">github.com/Rotwang9000/seneschal-data-api</a>. The brand name &ldquo;Seneschal&rdquo; and associated logos / artwork are reserved by the operator; use them only as a factual reference to this Service.</p>
+
+<h2>14. Changes to these Terms</h2>
+<p>We may revise these Terms. Material changes (in particular changes to pricing, refund policy, or acceptable-use scope) will be published on this page at least 7 days before they take effect. Continued use of the Service after the effective date constitutes acceptance.</p>
+
+<h2>15. Governing law and dispute resolution</h2>
+<p>These Terms are governed by the laws of <strong>England and Wales</strong>. The courts of England have exclusive jurisdiction over any dispute or claim arising out of or in connection with these Terms or their subject matter. Nothing in this clause limits a consumer&rsquo;s right to bring proceedings in the courts of their country of residence under any mandatory consumer-protection law.</p>
+
+<h2>16. Severability and entire agreement</h2>
+<p>If any provision of these Terms is found to be invalid or unenforceable, the remainder remains in full force. These Terms (together with the Privacy policy and the documented API reference at <a href="https://docs.seneschal.space/">docs.seneschal.space</a>) constitute the entire agreement between you and us with respect to the Service.</p>
+
+<footer>
+	<p>Operator contact: <a href="https://t.me/OrknetP"><code>@OrknetP</code> on Telegram</a>. Open source on GitHub: <a href="https://github.com/Rotwang9000/seneschal-data-api">Rotwang9000/seneschal-data-api</a>. See also the <a href="/privacy.html">Privacy policy</a>.</p>
+</footer>
+
+</body>
+</html>
