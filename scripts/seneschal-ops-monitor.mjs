@@ -91,11 +91,21 @@ function systemctlShow(unit) {
 	// doesn't paginate. We also tolerate exit != 0 (e.g. unit not
 	// found) by returning an empty parse, so the classifier sees
 	// status=unknown and the operator gets a clear delta.
+	//
+	// `--timestamp=unix` makes LastTriggerUSec come back as
+	// "@<seconds>.<micros>" instead of "Sun 2026-05-24 09:51 CEST",
+	// which `parseSystemdTimestampMs` handles natively (no Date.parse
+	// timezone-abbreviation guessing required). Older systemd that
+	// doesn't recognise the flag silently ignores it and falls back
+	// to the default human-readable form, which our parser also
+	// handles — so this is a strict improvement either way.
 	try {
 		const out = execFileSync('/usr/bin/systemctl', ['show', unit,
+			'--timestamp=unix',
 			'-p', 'ActiveState',
 			'-p', 'SubState',
 			'-p', 'Result',
+			'-p', 'ExecMainStatus',
 			'-p', 'LastTriggerUSec',
 			'-p', 'NRestarts',
 			'-p', 'UnitFileState'

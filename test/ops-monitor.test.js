@@ -5,6 +5,7 @@ import { describe, test, expect } from '@jest/globals';
 
 import {
 	parseShowOutput,
+	parseSystemdTimestampMs,
 	classifyUnit,
 	buildReport,
 	diffReports,
@@ -38,12 +39,47 @@ describe('parseShowOutput', () => {
 	});
 });
 
+describe('parseSystemdTimestampMs', () => {
+	test('null/empty/placeholder values return null', () => {
+		expect(parseSystemdTimestampMs(null)).toBe(null);
+		expect(parseSystemdTimestampMs(undefined)).toBe(null);
+		expect(parseSystemdTimestampMs('')).toBe(null);
+		expect(parseSystemdTimestampMs('  ')).toBe(null);
+		expect(parseSystemdTimestampMs('n/a')).toBe(null);
+		expect(parseSystemdTimestampMs('0')).toBe(null);
+		expect(parseSystemdTimestampMs('-')).toBe(null);
+	});
+
+	test('raw microseconds-since-epoch (no flag, programmatic dbus)', () => {
+		// 1_700_000_000 seconds = 1_700_000_000_000_000 us
+		expect(parseSystemdTimestampMs('1700000000000000')).toBe(1_700_000_000_000);
+	});
+
+	test('@unix.subsec format (--timestamp=unix)', () => {
+		expect(parseSystemdTimestampMs('@1700000000.5')).toBe(1_700_000_000_500);
+		expect(parseSystemdTimestampMs('@1700000000')).toBe(1_700_000_000_000);
+	});
+
+	test('default human-readable format (--timestamp=pretty)', () => {
+		// Real systemctl output. Date.parse handles RFC-2822-ish
+		// with named timezones on V8.
+		const ms = parseSystemdTimestampMs('Sun 2026-05-24 09:51:02 UTC');
+		expect(ms).toBe(Date.UTC(2026, 4, 24, 9, 51, 2));
+	});
+
+	test('rejects garbage', () => {
+		expect(parseSystemdTimestampMs('not a date')).toBe(null);
+		expect(parseSystemdTimestampMs('@notanumber')).toBe(null);
+		expect(parseSystemdTimestampMs('@-1')).toBe(null);
+	});
+});
+
 describe('classifyUnit', () => {
 	const NOW = 1_779_605_000_000;
 
-	test('long-running service in ActiveState=active → ok', () => {
+	test('long-running service in ActiveState=active SubState=running → ok', () => {
 		const r = classifyUnit({
-			service: { ActiveState: 'active', SubState: 'running', Result: 'success' },
+			service: { ActiveState: 'active', SubState: 'running', Result: 'success', ExecMainStatus: '0' },
 			timer: null,
 			expected: null,
 			nowMs: NOW
@@ -51,36 +87,102 @@ describe('classifyUnit', () => {
 		expect(r.status).toBe('ok');
 	});
 
-	test('failed service → failed', () => {
+	test('failed service (ActiveState=failed) → failed', () => {
 		const r = classifyUnit({
-			service: { ActiveState: 'failed', SubState: 'failed', Result: 'exit-code' },
+			service: { ActiveState: 'failed', SubState: 'failed', Result: 'exit-code', ExecMainStatus: '1' },
 			timer: null,
 			expected: null,
 			nowMs: NOW
 		});
 		expect(r.status).toBe('failed');
 		expect(r.reason).toMatch(/ActiveState=failed/);
+		expect(r.reason).toMatch(/ExecMainStatus=1/);
+	});
+
+	test('Result=exit-code AND ExecMainStatus=0 → ok (transient systemd quirk)', () => {
+		const r = classifyUnit({
+			service: { ActiveState: 'inactive', SubState: 'dead', Result: 'exit-code', ExecMainStatus: '0' },
+			timer: { LastTriggerUSec: '@' + ((NOW - 60_000) / 1000) },
+			expected: { intervalMs: 600_000 },
+			nowMs: NOW
+		});
+		// Exit 0 wins — Result=exit-code is just systemd's
+		// label for "process exited normally rather than via
+		// signal", not a failure.
+		expect(r.status).not.toBe('failed');
 	});
 
 	test('oneshot service that exited 0 → ok (timer drives it)', () => {
 		const r = classifyUnit({
-			service: { ActiveState: 'inactive', SubState: 'dead', Result: 'success' },
-			timer: { LastTriggerUSec: String((NOW - 60_000) * 1000), ActiveState: 'active' },
+			service: { ActiveState: 'inactive', SubState: 'dead', Result: 'success', ExecMainStatus: '0' },
+			timer: { LastTriggerUSec: '@' + ((NOW - 60_000) / 1000) },
 			expected: { intervalMs: 600_000 },
 			nowMs: NOW
 		});
 		expect(r.status).toBe('ok');
 	});
 
+	test('mid-activation race window (ActiveState=activating SubState=start, Result=success from prior fire) → ok, NOT unknown', () => {
+		// This is the exact false-positive that fired the first
+		// real Telegram alert. The watchdog tick landed inside the
+		// ~1ms window between the timer firing and node booting.
+		// Result still reflects the previous successful invocation;
+		// honour that.
+		const r = classifyUnit({
+			service: { ActiveState: 'activating', SubState: 'start', Result: 'success', ExecMainStatus: '0' },
+			timer: { LastTriggerUSec: '@' + ((NOW - 1_000) / 1000) },
+			expected: { intervalMs: 180_000 }, // 3-min poller
+			nowMs: NOW
+		});
+		expect(r.status).toBe('ok');
+		expect(r.reason).toMatch(/oneshot Result=success/);
+	});
+
+	test('first-ever fire (no prior Result yet, mid-activating) → ok via transient bucket', () => {
+		const r = classifyUnit({
+			service: { ActiveState: 'activating', SubState: 'start' },
+			timer: null,
+			expected: null,
+			nowMs: NOW
+		});
+		expect(r.status).toBe('ok');
+		expect(r.reason).toMatch(/transient/);
+	});
+
+	test('deactivating/reloading/maintenance treated as transient ok', () => {
+		for (const s of ['deactivating', 'reloading', 'maintenance', 'refreshing']) {
+			const r = classifyUnit({
+				service: { ActiveState: s, SubState: 'whatever' },
+				timer: null,
+				expected: null,
+				nowMs: NOW
+			});
+			expect(r.status).toBe('ok');
+		}
+	});
+
 	test('timer hasn\'t fired in too long → stale', () => {
 		const r = classifyUnit({
-			service: { ActiveState: 'inactive', SubState: 'dead', Result: 'success' },
-			timer: { LastTriggerUSec: String((NOW - 3_600_000) * 1000), ActiveState: 'active' },
+			service: { ActiveState: 'inactive', SubState: 'dead', Result: 'success', ExecMainStatus: '0' },
+			timer: { LastTriggerUSec: '@' + ((NOW - 3_600_000) / 1000) },
 			expected: { intervalMs: 600_000 },
 			nowMs: NOW
 		});
 		expect(r.status).toBe('stale');
 		expect(r.reason).toMatch(/timer last fired/);
+	});
+
+	test('staleness check works with human-readable LastTriggerUSec (real systemd output)', () => {
+		// Previously broken — Number("Sun 2026...") was NaN so
+		// the staleness check silently succeeded.
+		const dateStr = new Date(NOW - 3_600_000).toUTCString();
+		const r = classifyUnit({
+			service: { ActiveState: 'inactive', SubState: 'dead', Result: 'success', ExecMainStatus: '0' },
+			timer: { LastTriggerUSec: dateStr },
+			expected: { intervalMs: 600_000 },
+			nowMs: NOW
+		});
+		expect(r.status).toBe('stale');
 	});
 
 	test('unknown service shape → unknown', () => {
@@ -90,12 +192,11 @@ describe('classifyUnit', () => {
 
 	test('grace window (5 min) tolerates timer slippage', () => {
 		const r = classifyUnit({
-			service: { ActiveState: 'inactive', SubState: 'dead', Result: 'success' },
-			timer: { LastTriggerUSec: String((NOW - 12 * 60_000) * 1000) },
+			service: { ActiveState: 'inactive', SubState: 'dead', Result: 'success', ExecMainStatus: '0' },
+			timer: { LastTriggerUSec: '@' + ((NOW - 12 * 60_000) / 1000) },
 			expected: { intervalMs: 10 * 60_000 }, // 10 min cadence
 			nowMs: NOW
 		});
-		// 12 min ago is within 10 + 5 grace, so it's still ok.
 		expect(r.status).toBe('ok');
 	});
 });
@@ -140,6 +241,30 @@ describe('buildReport', () => {
 			nowMs: NOW
 		});
 		expect(r.summary).toMatch(/1 failed.*1 stale.*1 script/);
+	});
+
+	test('unknown units appear in the summary (regression: empty "DEGRADED · " bug)', () => {
+		const r = buildReport({
+			units: { z: { status: 'unknown', reason: 'r' } },
+			scripts: {},
+			nowMs: NOW
+		});
+		expect(r.summary).toMatch(/1 unknown \(z\)/);
+		expect(r.summary).not.toMatch(/DEGRADED · $/);
+	});
+
+	test('degraded with no recognised failure bucket surfaces "investigate" hint', () => {
+		// Synthetic edge case — should never happen in practice
+		// because buildReport's overall=degraded predicate is
+		// `anyBad`, so by definition there's a bad entry — but
+		// belt-and-braces in case the predicate diverges.
+		const r = buildReport({
+			units: { a: { status: 'weird-future-state' } },
+			scripts: {},
+			nowMs: NOW
+		});
+		expect(r.overall).toBe('degraded');
+		expect(r.summary).toMatch(/investigate the full report/);
 	});
 });
 
