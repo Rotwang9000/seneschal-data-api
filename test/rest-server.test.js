@@ -111,6 +111,95 @@ describe('routing & shape', () => {
 	});
 });
 
+describe('/v1/ops/health (watchdog state surface)', () => {
+	// We rebuild a tiny one-off app for each scenario so the
+	// shared `app` (set in beforeAll) stays untouched. The
+	// endpoint reads the state file path from
+	// `options.opsStateFile`, so we can point it at fixtures
+	// without env mutation.
+	async function buildWithStateFile(pathOrNull) {
+		return buildApp({
+			db,
+			sparkPath,
+			morphoPath,
+			shadowPath,
+			leaderboardTtlMs: 50,
+			rateLimit: false,
+			logger: false,
+			incomeCfg: { enabled: false, reason: 'disabled-in-tests' },
+			opsStateFile: pathOrNull
+		});
+	}
+
+	test('missing state file → 503 overall=unknown', async () => {
+		const a = await buildWithStateFile(join(tmpRoot, 'no-such-file.json'));
+		try {
+			const r = await a.inject({ method: 'GET', url: '/v1/ops/health' });
+			expect(r.statusCode).toBe(503);
+			expect(r.json().overall).toBe('unknown');
+			expect(r.json().reason).toMatch(/no watchdog state/);
+		}
+		finally { await a.close(); }
+	});
+
+	test('fresh ok state → 200', async () => {
+		const fp = join(tmpRoot, 'ops-ok.json');
+		writeFileSync(fp, JSON.stringify({
+			overall: 'ok',
+			summary: 'OK · 5 units + 4 scripts healthy',
+			generatedAtMs: Date.now(),
+			units: { 'seneschal-data-rest.service': { status: 'ok' } },
+			scripts: { '/opt/x.mjs': { status: 'ok' } }
+		}));
+		const a = await buildWithStateFile(fp);
+		try {
+			const r = await a.inject({ method: 'GET', url: '/v1/ops/health' });
+			expect(r.statusCode).toBe(200);
+			expect(r.json().overall).toBe('ok');
+			expect(r.json().ageMs).toBeGreaterThanOrEqual(0);
+		}
+		finally { await a.close(); }
+	});
+
+	test('fresh degraded state → 503 overall=degraded', async () => {
+		const fp = join(tmpRoot, 'ops-bad.json');
+		writeFileSync(fp, JSON.stringify({
+			overall: 'degraded',
+			summary: 'DEGRADED · 1 failed (x)',
+			generatedAtMs: Date.now(),
+			units: { 'x': { status: 'failed', reason: 'boom' } },
+			scripts: {}
+		}));
+		const a = await buildWithStateFile(fp);
+		try {
+			const r = await a.inject({ method: 'GET', url: '/v1/ops/health' });
+			expect(r.statusCode).toBe(503);
+			expect(r.json().overall).toBe('degraded');
+			expect(r.json().units.x.status).toBe('failed');
+		}
+		finally { await a.close(); }
+	});
+
+	test('stale state file → 503 overall=stale', async () => {
+		const fp = join(tmpRoot, 'ops-stale.json');
+		writeFileSync(fp, JSON.stringify({
+			overall: 'ok',
+			summary: 'OK',
+			generatedAtMs: Date.now() - 2 * 60 * 60 * 1000, // 2 hours ago
+			units: {},
+			scripts: {}
+		}));
+		const a = await buildWithStateFile(fp);
+		try {
+			const r = await a.inject({ method: 'GET', url: '/v1/ops/health' });
+			expect(r.statusCode).toBe(503);
+			expect(r.json().overall).toBe('stale');
+			expect(r.json().reason).toMatch(/min old/);
+		}
+		finally { await a.close(); }
+	});
+});
+
 describe('/v1/liquidations/atrisk', () => {
 	test('returns at-risk borrowers under HF cap', async () => {
 		const r = await call('GET', '/v1/liquidations/atrisk?max_hf=1.1');

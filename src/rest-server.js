@@ -90,9 +90,15 @@ import {
 	computeWatchRate,
 	describeCurrentPricing
 } from './private-watch-pricing.js';
+import { readFile } from 'node:fs/promises';
 
 const ONE_HOUR_MS = 60 * 60 * 1000;
 const ONE_DAY_MS = 24 * ONE_HOUR_MS;
+// Public ops-health endpoint reads the watchdog's last-written
+// state file. Path is overridable via env so dev/test can point
+// it at a fixture without touching prod paths.
+const OPS_STATE_FILE_DEFAULT = '/var/lib/seneschal-ops-monitor/state.json';
+const OPS_STATE_MAX_AGE_MS = 30 * 60 * 1000; // > 2x watchdog cadence
 const MAX_HISTORY_WINDOW_MS = 90 * ONE_DAY_MS;
 const DEFAULT_HISTORY_WINDOW_MS = 30 * ONE_DAY_MS;
 
@@ -332,6 +338,45 @@ export async function buildApp(options = {}) {
 			_shadowPath: shadowPath,
 			_ttlMs: ttlMs
 		});
+	});
+
+	// Public ops health endpoint — exposes what the watchdog
+	// timer wrote on its last tick. We never read systemd from
+	// inside the REST process (the watchdog is the privileged
+	// one). When the state file is missing OR older than ~2x the
+	// watchdog cadence we report `overall: "stale"` so a silent
+	// watchdog failure is itself visible. The stats page polls
+	// this for the ops dot.
+	const opsStateFile = options.opsStateFile ?? config.opsStateFile ?? OPS_STATE_FILE_DEFAULT;
+	app.get('/v1/ops/health', async (_req, reply) => {
+		try {
+			const buf = await readFile(opsStateFile, 'utf8');
+			const report = JSON.parse(buf);
+			const ageMs = Date.now() - Number(report?.generatedAtMs ?? 0);
+			if (!Number.isFinite(ageMs) || ageMs > OPS_STATE_MAX_AGE_MS) {
+				reply.code(503);
+				return {
+					overall: 'stale',
+					reason: `watchdog state is ${Math.round(ageMs / 60_000)} min old (max ${Math.round(OPS_STATE_MAX_AGE_MS / 60_000)} min)`,
+					generatedAtMs: report?.generatedAtMs ?? 0,
+					ageMs,
+					units: report?.units ?? {},
+					scripts: report?.scripts ?? {}
+				};
+			}
+			if (report.overall !== 'ok') reply.code(503);
+			return { ...report, ageMs };
+		}
+		catch (err) {
+			reply.code(503);
+			return {
+				overall: 'unknown',
+				reason: err?.code === 'ENOENT'
+					? `no watchdog state at ${opsStateFile}`
+					: `read failed: ${err?.message ?? String(err)}`,
+				generatedAtMs: 0
+			};
+		}
 	});
 
 	// Single bundled endpoint feeding stats.seneschal.space. Returns

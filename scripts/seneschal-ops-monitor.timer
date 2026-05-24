@@ -1,0 +1,18 @@
+# Run the ops watchdog every 10 minutes. Cadence picked to be
+# slow enough not to spam systemctl-show calls + fast enough that
+# the worst-case detection lag is < cadence + grace = ~15 min.
+# Anything failing for more than one tick gets a Telegram alert.
+
+[Unit]
+Description=Seneschal ops watchdog timer (every 10 min)
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=10min
+Persistent=true
+RandomizedDelaySec=30s
+AccuracySec=30s
+Unit=seneschal-ops-monitor.service
+
+[Install]
+WantedBy=timers.target

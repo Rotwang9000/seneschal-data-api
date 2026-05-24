@@ -280,6 +280,22 @@ footer a { color: var(--muted) }
 		<h2 style="color:var(--accent);margin:0">Seneschal activity — last 24h</h2>
 		<span class="kpi-sub">counts only — no profit figures exposed</span>
 	</header>
+
+	<!-- Ops health strip — populated by /v1/ops/health on every
+	     stats refresh. Each unit gets a coloured dot so a regression
+	     is visible at a glance from the public dashboard. -->
+	<section id="ops-health" class="kpi-grid" style="margin-bottom:1.4em">
+		<div class="op-tile" style="grid-column:span 2">
+			<div class="op-label">Ops watchdog</div>
+			<div class="op-value mono-sm" id="ops-overall">—</div>
+			<div class="op-sub" id="ops-summary">checked every 10 min · post-mortem alerts via @OrknetP</div>
+		</div>
+		<div class="op-tile" style="grid-column:span 4">
+			<div class="op-label">Per-unit status</div>
+			<div class="op-value" id="ops-dots" style="display:flex;flex-wrap:wrap;gap:0.45em;font-size:0.85em;line-height:1.4;align-items:center">—</div>
+			<div class="op-sub" id="ops-changes">last change: none recorded since boot</div>
+		</div>
+	</section>
 	<div class="operator-tiles">
 		<div class="op-tile">
 			<div class="op-label">Liquidation attempts</div>
@@ -1119,6 +1135,53 @@ function escapeHtml(s) {
 	}[c]));
 }
 
+// Render the ops-health strip. Splits the watchdog report into a
+// summary tile + a per-unit dot row. We tolerate any failure mode
+// of the endpoint (404, 503, network) by colouring the dot row to
+// match — `degraded`/`stale`/`unknown` all show as their own dot.
+async function renderOpsHealth() {
+	const overallEl = document.getElementById('ops-overall');
+	const summaryEl = document.getElementById('ops-summary');
+	const dotsEl = document.getElementById('ops-dots');
+	const changesEl = document.getElementById('ops-changes');
+	if (!overallEl) return;
+	let report = null;
+	let httpStatus = 0;
+	try {
+		const r = await fetch(`${API_BASE}/v1/ops/health`, { headers: { accept: 'application/json' } });
+		httpStatus = r.status;
+		report = await r.json();
+	}
+	catch (e) {
+		overallEl.textContent = 'UNREACHABLE';
+		overallEl.className = 'op-value mono-sm warn';
+		summaryEl.textContent = `couldn't reach /v1/ops/health: ${e.message}`;
+		dotsEl.textContent = '—';
+		return;
+	}
+	const overall = report?.overall ?? 'unknown';
+	const colour = { ok: 'good', degraded: 'warn', stale: 'warn', unknown: 'warn' }[overall] ?? 'warn';
+	overallEl.className = 'op-value mono-sm ' + colour;
+	overallEl.textContent = overall.toUpperCase();
+	const ageMin = report?.ageMs ? Math.round(report.ageMs / 60000) : null;
+	summaryEl.textContent = `${report?.summary ?? '(no summary)'}${ageMin != null ? ` · last tick ${ageMin}m ago` : ''}`;
+	const units = report?.units ?? {};
+	const scripts = report?.scripts ?? {};
+	const dotFor = (status) => {
+		const c = { ok: 'var(--good)', failed: 'var(--danger)', stale: 'var(--warn)', missing: 'var(--danger)', unknown: 'var(--muted)' }[status] ?? 'var(--muted)';
+		return `<span style="display:inline-block;width:0.65em;height:0.65em;border-radius:50%;background:${c}"></span>`;
+	};
+	const shortName = (n) => n.replace(/^seneschal-/, '').replace(/\.service$/, '');
+	const unitBadges = Object.entries(units).map(([name, v]) =>
+		`<span style="display:inline-flex;gap:0.35em;align-items:center" title="${escapeHtml(v.reason ?? v.status)}">${dotFor(v.status)} ${escapeHtml(shortName(name))}</span>`
+	);
+	const scriptBadges = Object.entries(scripts).map(([path, v]) => {
+		const base = path.split('/').pop();
+		return `<span style="display:inline-flex;gap:0.35em;align-items:center" title="${escapeHtml(v.reason ?? v.status)}">${dotFor(v.status)} ${escapeHtml(base)}</span>`;
+	});
+	dotsEl.innerHTML = unitBadges.concat(scriptBadges).join(' · ');
+}
+
 // ── data fetch + render orchestration ─────────────────────
 async function refresh() {
 	setStatus('loading', 'refreshing…');
@@ -1138,12 +1201,18 @@ async function refresh() {
 		renderRecentLiq(d);
 		renderPremium(d);
 		renderSupport(d);
+		// Ops-health is its own endpoint so a slow stats overview
+		// doesn't gate the operational view (or vice-versa).
+		renderOpsHealth().catch(() => { /* already painted error state */ });
 		clearError();
 		const ts = new Date(d.as_of_ms);
 		setStatus('', `updated ${ts.toLocaleTimeString()}`);
 	} catch (e) {
 		setStatus('error', `error: ${e.message}`);
 		showError(`Could not load stats: ${e.message}. Retrying in 30s.`);
+		// Still paint ops-health independently — if the stats DB
+		// is down we still want to know whether the watchdog is up.
+		renderOpsHealth().catch(() => {});
 	}
 }
 

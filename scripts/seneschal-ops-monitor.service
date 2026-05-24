@@ -1,0 +1,46 @@
+# Systemd one-shot: ops watchdog. Inspects all seneschal-* units,
+# verifies the data-api script directory contents, and posts a
+# Telegram alert + state file on state changes. Paired with
+# seneschal-ops-monitor.timer (every 10 min). Reads env from
+# /etc/seneschal/ops-monitor.env (TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID,
+# optional overrides).
+#
+# Exit 0 = ok, exit 2 = degraded (still allowed — we let systemd
+# log the WARN line; degraded is the watchdog's NORMAL output when
+# something else is broken, so the watchdog itself shouldn't go
+# red on top of that). Exit 1 = watchdog crashed (then yes, we go
+# red — that's a meta-problem worth attention).
+
+[Unit]
+Description=Seneschal — ops watchdog (state of seneschal-* units + scripts)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+EnvironmentFile=-/etc/seneschal/ops-monitor.env
+WorkingDirectory=/opt/seneschal-data-api
+ExecStart=/usr/bin/node scripts/seneschal-ops-monitor.mjs
+# SuccessExitStatus lets the unit succeed on the "degraded but
+# alerted" exit code so the watchdog itself doesn't trigger its
+# own alarm just because the state it reported was bad.
+SuccessExitStatus=0 2
+
+# Sandboxing — we only need to read systemctl state + the script
+# dir + the state file. No incoming network. Outgoing HTTPS for
+# Telegram.
+NoNewPrivileges=true
+ProtectSystem=full
+ProtectHome=read-only
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+PrivateTmp=true
+SystemCallArchitectures=native
+
+# Resource caps — this is microseconds of CPU.
+MemoryMax=128M
+CPUWeight=20
+IOWeight=20
