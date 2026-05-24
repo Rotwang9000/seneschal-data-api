@@ -44,6 +44,7 @@ import {
 	buildLowCreditBody,
 	applyDayCharge,
 	applyCallCharge,
+	effectiveRatesForRow,
 	WATCH_CONSTANTS
 } from './private-watch.js';
 
@@ -130,11 +131,17 @@ export async function runPollerTick(deps) {
 async function pollOne({ row, db, masterKey, nfptClient, fetchImpl, webhookTimeoutMs, responseMaxBytes, logger, now, summary }) {
 	const tickStartMs = now();
 
+	// Surge pricing: the meter math reads the locked-in rate from
+	// the row (falling back to the constant for legacy rows that
+	// pre-date the schema migration). Compute once per tick — used
+	// by step (1), (2) and (4).
+	const rates = effectiveRatesForRow(row);
+
 	// 1) Per-day billing. Always applied first so the credit block
 	//    we emit later reflects the live meter. The patch may charge
 	//    zero atomic units if not enough time has elapsed since the
 	//    last bill — in that case we leave the row untouched.
-	const dayPatch = applyDayCharge(row, tickStartMs);
+	const dayPatch = applyDayCharge(row, tickStartMs, { dayRateAtomic: rates.dayRateAtomic });
 	if (dayPatch.chargeAtomic > 0) {
 		updateWatchState(db, row.id, {
 			credit_atomic: dayPatch.credit_atomic,
@@ -156,7 +163,7 @@ async function pollOne({ row, db, masterKey, nfptClient, fetchImpl, webhookTimeo
 	//    user who tops up and then runs down again gets a fresh
 	//    warning. Deliberately not charged as a regular call — this
 	//    is a service-driven courtesy notification.
-	if (Number(row.credit_atomic ?? 0) <= WATCH_CONSTANTS.LOW_CREDIT_THRESHOLD_ATOMIC
+	if (Number(row.credit_atomic ?? 0) <= rates.lowCreditThresholdAtomic
 		&& Number(row.low_credit_warned ?? 0) === 0
 		&& Number(row.credit_atomic ?? 0) > 0) {
 		const fired = await maybeFireLowCredit({
@@ -259,7 +266,7 @@ async function pollOne({ row, db, masterKey, nfptClient, fetchImpl, webhookTimeo
 				: 'status_change';
 		// 4) Per-call billing. Burns CALL_RATE_ATOMIC. May take credit
 		//    to zero — the watch silently pauses next tick.
-		const callPatch = applyCallCharge(row, nowMs);
+		const callPatch = applyCallCharge(row, nowMs, { callRateAtomic: rates.callRateAtomic, dayRateAtomic: rates.dayRateAtomic });
 		updateWatchState(db, row.id, {
 			last_delivered_balance: knownJson,
 			last_delivered_at_ms: nowMs,

@@ -29,9 +29,10 @@
 import {
 	WATCH_CONSTANTS,
 	atomicToUsdString,
-	buildCreditBlock
+	buildCreditBlock,
+	effectiveRatesForRow
 } from './private-watch.js';
-import { topupWatch as storeTopupWatch } from './private-watch-store.js';
+import { topupWatch as storeTopupWatch, getWatch as storeGetWatch } from './private-watch-store.js';
 
 /**
  * Canonical USDC addresses per CAIP-2 network. Anything outside
@@ -304,10 +305,19 @@ export function registerCustomTopupRoute(app, deps) {
 		// reconcile manually. We deliberately don't try to refund
 		// (the protocol can't) and return a 5xx so the client
 		// knows something went wrong on our side.
+		// Read the existing watch's locked-in rate so the top-up
+		// honours the surge tier the user signed up at.
+		const existing = storeGetWatch(watchDb, body.watchId, body.watchToken);
+		const rates = existing && !existing.error
+			? effectiveRatesForRow(existing)
+			: {
+				dayRateAtomic: WATCH_CONSTANTS.DAY_RATE_ATOMIC,
+				lowCreditThresholdAtomic: WATCH_CONSTANTS.LOW_CREDIT_THRESHOLD_ATOMIC
+			};
 		const out = storeTopupWatch(watchDb, body.watchId, body.watchToken, {
 			creditAtomic: Number(body.amountAtomic),
-			dayRateAtomic: WATCH_CONSTANTS.DAY_RATE_ATOMIC,
-			lowThresholdAtomic: WATCH_CONSTANTS.LOW_CREDIT_THRESHOLD_ATOMIC,
+			dayRateAtomic: rates.dayRateAtomic,
+			lowThresholdAtomic: rates.lowCreditThresholdAtomic,
 			maxLifetimeMs: WATCH_CONSTANTS.MAX_WATCH_LIFETIME_MS
 		});
 		if (!out.ok) {

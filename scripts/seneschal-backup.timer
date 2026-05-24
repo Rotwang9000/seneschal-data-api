@@ -1,0 +1,18 @@
+# Systemd timer: daily encrypted backup of the Private Watch DB.
+# Scheduled at 03:35 UTC — after the income-poller stats roll-up
+# (03:00 UTC) and well before the paymaster sweep-check (03:00
+# CEST → 01:00 UTC the same day, but the next sweep is 24 h
+# later, so backups land cleanly between the two).
+
+[Unit]
+Description=Daily Seneschal backup timer
+
+[Timer]
+OnCalendar=*-*-* 03:35:00 UTC
+Persistent=true
+RandomizedDelaySec=300
+AccuracySec=60s
+Unit=seneschal-backup.service
+
+[Install]
+WantedBy=timers.target

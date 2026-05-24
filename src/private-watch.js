@@ -845,6 +845,30 @@ export function applyTopup(row, creditAtomic, nowMs, {
 	};
 }
 
+/**
+ * Read the per-watch surge rates off a row, falling back to the
+ * legacy `WATCH_CONSTANTS.*` defaults for rows that pre-date the
+ * surge-pricing migration (where `day_rate_atomic` is NULL). The
+ * meter math + the low-credit gate all flow through this so the
+ * fallback policy lives in exactly one place.
+ *
+ * Returns `{ dayRateAtomic, callRateAtomic, lowCreditThresholdAtomic }`.
+ */
+export function effectiveRatesForRow(row) {
+	const day = Number(row?.day_rate_atomic ?? 0);
+	const call = Number(row?.call_rate_atomic ?? 0);
+	const low = Number(row?.low_credit_threshold_atomic ?? 0);
+	const dayRateAtomic = Number.isFinite(day) && day > 0 ? day : WATCH_CONSTANTS.DAY_RATE_ATOMIC;
+	const callRateAtomic = Number.isFinite(call) && call > 0 ? call : WATCH_CONSTANTS.CALL_RATE_ATOMIC;
+	// Threshold policy: trust whatever the surge engine stored
+	// at creation time; for legacy rows (NULL column) fall back
+	// to the long-standing global constant so existing watches
+	// don't suddenly trip low-credit warnings on their starter
+	// credit.
+	const lowCreditThresholdAtomic = low > 0 ? low : WATCH_CONSTANTS.LOW_CREDIT_THRESHOLD_ATOMIC;
+	return { dayRateAtomic, callRateAtomic, lowCreditThresholdAtomic };
+}
+
 // ── Internal helpers ─────────────────────────────────────────────
 
 function numericString(v) {

@@ -267,6 +267,11 @@ footer a { color: var(--muted) }
 			<div class="op-value mono-sm" id="watch-cadence">—</div>
 			<div class="op-sub" id="watch-cadence-sub">tick interval (NFPT scanner stays warm)</div>
 		</div>
+		<div class="op-tile">
+			<div class="op-label">Surge rate (today)</div>
+			<div class="op-value mono-sm" id="watch-surge">—</div>
+			<div class="op-sub" id="watch-surge-sub">per-watch rate locked at creation · earlier = cheaper forever</div>
+		</div>
 	</div>
 </section>
 
@@ -994,8 +999,9 @@ function renderPrivateWatch(d) {
 		const t1  = pw.price_topup_1   ?? '$1.00';
 		const t5  = pw.price_topup_5   ?? '$5.00';
 		elTop.textContent = `${t10} / ${t1} / ${t5}`;
-		const customRange = priv?.topup_custom?.min_atomic && priv?.topup_custom?.max_atomic
-			? `+ /topup-custom ($${(Number(priv.topup_custom.min_atomic) / 1_000_000).toFixed(2)}–$${(Number(priv.topup_custom.max_atomic) / 1_000_000).toFixed(2)})`
+		const tc = pw.topup_custom;
+		const customRange = tc?.min_atomic && tc?.max_atomic
+			? `+ /topup-custom ($${(Number(tc.min_atomic) / 1_000_000).toFixed(2)}–$${(Number(tc.max_atomic) / 1_000_000).toFixed(2)})`
 			: '+ /topup-custom (variable)';
 		elTopSub.textContent = '/v1/private/topup, /topup-1, /topup-5 ' + customRange;
 	}
@@ -1015,6 +1021,22 @@ function renderPrivateWatch(d) {
 		? `${Math.round(cadenceSec / 60)} min`
 		: `${cadenceSec} s`;
 	elCadSub.textContent = `${cadenceSec}s tick · NFPT scanner stays warm`;
+
+	// Surge-pricing tile (active-load auto-pricing).
+	// New watches lock the rate at creation time; existing watches
+	// keep their cheaper rate forever. We surface (a) the live
+	// rate, (b) the tier name, and (c) the formula so anyone
+	// auditing the math can verify it against /v1/private/info.
+	const surge = pw.surge_pricing;
+	const elSurge = document.getElementById('watch-surge');
+	const elSurgeSub = document.getElementById('watch-surge-sub');
+	if (elSurge && surge) {
+		const tierLabel = { base: 'base tier', surge: 'surge tier', cap: 'capped tier' }[surge.current_tier] ?? '?';
+		const tierClass = { base: 'good', surge: '', cap: 'warn' }[surge.current_tier] ?? '';
+		elSurge.className = 'op-value mono-sm ' + tierClass;
+		elSurge.textContent = `${surge.current_day_rate_usd} / day`;
+		elSurgeSub.innerHTML = `<strong>${escapeHtml(tierLabel)}</strong> · ${escapeHtml(String(surge.active_watches))} active · cap ${escapeHtml(surge.max_day_rate_usd)}/day · base ${escapeHtml(surge.base_day_rate_usd)}/day · formula: <code>${escapeHtml(surge.formula)}</code>`;
+	}
 }
 
 function renderPremium(d) {

@@ -104,6 +104,14 @@ export function openWatchDb(path) {
 	addColumnIfMissing(db, 'private_watches', 'credit_billed_atomic', 'INTEGER DEFAULT 0');
 	addColumnIfMissing(db, 'private_watches', 'credit_last_billed_ms', 'INTEGER');
 	addColumnIfMissing(db, 'private_watches', 'low_credit_warned', 'INTEGER DEFAULT 0');
+	// Surge pricing: the rate a watch was created at is stored on
+	// the row so existing watches keep their cheap rate even when
+	// the global surge moves up. NULL on legacy rows; callers fall
+	// back to WATCH_CONSTANTS.* (see effectiveDayRate in
+	// private-watch-pricing.js).
+	addColumnIfMissing(db, 'private_watches', 'day_rate_atomic', 'INTEGER');
+	addColumnIfMissing(db, 'private_watches', 'call_rate_atomic', 'INTEGER');
+	addColumnIfMissing(db, 'private_watches', 'low_credit_threshold_atomic', 'INTEGER');
 	// Now that the credit columns exist (whether freshly created or
 	// freshly added by ALTER TABLE) we can safely add the lookup index.
 	try { db.exec('CREATE INDEX IF NOT EXISTS idx_watch_credit ON private_watches(credit_atomic)'); }
@@ -165,6 +173,12 @@ export function createWatch(db, params) {
 		birthdayHeight = null,
 		creditAtomic,
 		dayRateAtomic,
+		// New optional fields. Both default to NULL (legacy
+		// behaviour) so existing callers that haven't migrated to
+		// surge pricing keep working — the meter math will read the
+		// fallback from WATCH_CONSTANTS via effectiveDayRate().
+		callRateAtomic = null,
+		lowCreditThresholdAtomic = null,
 		maxLifetimeMs = Number.MAX_SAFE_INTEGER,
 		nowMs = Date.now()
 	} = params;
@@ -189,6 +203,12 @@ export function createWatch(db, params) {
 	if (!Number.isInteger(dayRateAtomic) || dayRateAtomic <= 0) {
 		throw new TypeError('createWatch: dayRateAtomic must be a positive integer');
 	}
+	if (callRateAtomic != null && (!Number.isInteger(callRateAtomic) || callRateAtomic <= 0)) {
+		throw new TypeError('createWatch: callRateAtomic must be a positive integer (or omitted)');
+	}
+	if (lowCreditThresholdAtomic != null && (!Number.isInteger(lowCreditThresholdAtomic) || lowCreditThresholdAtomic < 0)) {
+		throw new TypeError('createWatch: lowCreditThresholdAtomic must be a non-negative integer (or omitted)');
+	}
 	const { id, token } = newIdAndToken();
 	const tokenHash = sha256(Buffer.from(token, 'utf8'));
 	const naiveExpires = nowMs + Math.floor((creditAtomic * 86_400_000) / dayRateAtomic);
@@ -198,8 +218,9 @@ export function createWatch(db, params) {
 			id, token_hash, chain, address, view_key_ct,
 			webhook_url, webhook_secret, birthday_height,
 			expires_at_ms, created_at_ms,
-			credit_atomic, credit_topups_atomic, credit_last_billed_ms
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			credit_atomic, credit_topups_atomic, credit_last_billed_ms,
+			day_rate_atomic, call_rate_atomic, low_credit_threshold_atomic
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`).run(
 		id,
 		tokenHash,
@@ -213,9 +234,12 @@ export function createWatch(db, params) {
 		nowMs,
 		creditAtomic,
 		creditAtomic,
-		nowMs
+		nowMs,
+		dayRateAtomic,
+		callRateAtomic,
+		lowCreditThresholdAtomic
 	);
-	return { id, token, expiresAt, createdAt: nowMs, creditAtomic };
+	return { id, token, expiresAt, createdAt: nowMs, creditAtomic, dayRateAtomic, callRateAtomic, lowCreditThresholdAtomic };
 }
 
 /**

@@ -934,7 +934,16 @@ describe('private watch routes', () => {
 		expect(r.statusCode).toBe(200);
 		const body = r.json();
 		expect(body.creditAtomic).toBe('100000');
-		expect(body.ratePerDayAtomic).toBe('20000');
+		// Surge pricing: the rate depends on the live active-watch
+		// count in this shared test DB. Assert that it's a digit
+		// string at or above the documented base ($0.02) and at
+		// or below the cap ($0.25), and that the response carries
+		// the surge metadata the panel/docs rely on.
+		const ratePerDay = Number(body.ratePerDayAtomic);
+		expect(ratePerDay).toBeGreaterThanOrEqual(20_000);
+		expect(ratePerDay).toBeLessThanOrEqual(250_000);
+		expect(['base', 'surge', 'cap']).toContain(body.pricingTier);
+		expect(typeof body.activeWatchesAtCreation).toBe('number');
 	});
 
 	test('POST /v1/private/watch rejects negative durationDays (400)', async () => {

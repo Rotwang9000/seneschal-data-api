@@ -1,0 +1,53 @@
+# Systemd one-shot unit for the daily Seneschal Private Watch
+# encrypted backup. Paired with seneschal-backup.timer for the
+# schedule. Driven by an env file the operator owns (kept out of
+# git): /etc/seneschal/backup.env.
+#
+# This unit deliberately runs as root because (a) it needs read
+# access to /var/lib/seneschal/private-watch.db (owned by the API
+# service user) and (b) it reads the storagebox SSH key from
+# /root/.ssh/id_ed25519. Everything else is locked down via the
+# sandboxing directives below.
+
+[Unit]
+Description=Seneschal — encrypted backup of the Private Watch DB to remote storage
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+EnvironmentFile=-/etc/seneschal/backup.env
+ExecStart=/usr/local/bin/seneschal-backup.sh
+
+# Sandboxing — light because we have to:
+#   (a) read /var/lib/seneschal-data-api/ which is 750 mevbot:mevbot,
+#       so root needs CAP_DAC_READ_SEARCH to traverse it (empty
+#       CapabilityBoundingSet= strips that and makes the DB look
+#       "not found");
+#   (b) call openssl + sqlite3 from /usr/bin (ProtectSystem=full
+#       keeps these reachable while making /etc + /usr read-only);
+#   (c) rsync over SSH to an arbitrary remote host.
+NoNewPrivileges=true
+ProtectSystem=full
+ProtectHome=read-only
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+PrivateTmp=true
+SystemCallArchitectures=native
+# Do not blank CapabilityBoundingSet — root needs DAC_READ_SEARCH
+# to enter the 750 API data dir and DAC_OVERRIDE to write the
+# encrypted blob to /var/backups/seneschal as root.
+
+# Resource caps — backup of a few hundred-MB DB doesn't need much.
+MemoryMax=512M
+CPUWeight=50
+IOWeight=50
+
+# Drop ambient capabilities so any child process can't grant
+# itself new ones, but keep the standard root caps in the
+# bounding set so the script can read mevbot-owned files +
+# write to /var/backups/seneschal.
+AmbientCapabilities=

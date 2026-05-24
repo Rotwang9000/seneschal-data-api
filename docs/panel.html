@@ -202,7 +202,10 @@ footer { color: var(--muted); font-size: 0.9em; margin-top: 3em; padding-top: 1e
 	<label class="field" for="w-birthday">Birthday height <span class="hint">optional; speeds up first scan if your wallet is recent</span></label>
 	<input type="number" id="w-birthday" placeholder="(leave blank for full scan)" min="0">
 
-	<label class="field">Starter credit <span class="hint">drag to choose how much credit to load up front (covers ~$0.02/UTC-day + $0.005/webhook)</span></label>
+	<label class="field">Starter credit <span class="hint">drag to choose how much credit to load up front (rate locked in at creation, see below)</span></label>
+	<div id="surge-rate-hint" class="slider-hint" style="background:var(--soft);padding:0.5em 0.75em;border-radius:4px;border:1px solid var(--card-border);margin:0.2em 0 0.4em">
+		Loading current rate…
+	</div>
 	<div class="slider-row">
 		<input type="range" id="w-credit" min="10" max="2500" step="10" value="10" aria-label="starter credit in atomic USDC cents">
 		<span class="slider-value"><span id="w-credit-usd">$0.10</span><span class="unit">USDC</span><span class="days" id="w-credit-days">~5 days</span></span>
@@ -704,12 +707,47 @@ function refreshWatchesCount() {
 }
 refreshWatchesCount();
 
-// ── Slider helpers ─────────────────────────────────────────────
-// Atomic USDC per UTC-day at the idle rate ($0.02). Used for "~N
-// days" hints. Mirrors WATCH_CONSTANTS.DAY_RATE_ATOMIC server-side;
-// any divergence would be cosmetic only (the server is canonical).
-const DAY_RATE_ATOMIC = 20_000;
+// ── Live surge-rate hint ─────────────────────────────────────────
+// Pull /v1/private/info on first paint and display the current
+// per-day rate. New watches lock in this rate for their lifetime,
+// so showing it up-front is honest and helps the user decide
+// whether to subscribe before the surge climbs further.
+let liveDayRateAtomic = 20_000; // optimistic default = base
+async function refreshSurgeRate() {
+	try {
+		const r = await fetch(`${API_BASE}/v1/private/info`);
+		if (!r.ok) return;
+		const info = await r.json();
+		const surge = info?.surge_pricing;
+		if (!surge) return;
+		liveDayRateAtomic = Number(surge.current_day_rate_atomic) || liveDayRateAtomic;
+		// Use the server-formatted USD strings ($0.02, $0.005…) so
+		// the panel doesn't reinvent micro-cent formatting that can
+		// disagree with the docs.
+		const dayUsd = surge.current_day_rate_usd ?? `$${(liveDayRateAtomic / 1_000_000).toFixed(2)}`;
+		const callUsd = surge.current_call_rate_usd ?? "?";
+		const tierLabel = { base: "base tier", surge: "surge tier", cap: "top tier (capped)" }[surge.current_tier] ?? "?";
+		const tierColour = { base: "var(--good)", surge: "var(--brand)", cap: "var(--warn)" }[surge.current_tier] ?? "inherit";
+		const hintEl = document.getElementById("surge-rate-hint");
+		if (!hintEl) return;
+		hintEl.innerHTML = `
+			<strong>Current rate: ${esc(dayUsd)}/day idle, ${esc(callUsd)}/webhook</strong>
+			<span style="color:${tierColour}; font-weight:600">[${esc(tierLabel)}]</span>
+			<br><span class="muted" style="font-size:0.88em">${esc(surge.active_watches)} active watches · ${esc(surge.formula)} · cap ${esc(surge.max_day_rate_usd)}/day. Your watch locks in this rate forever — sign up before more people join.</span>
+		`;
+		// Repaint the days estimate on every slider since the rate
+		// just changed.
+		if (watchSlider) watchSlider.paint();
+	}
+	catch (_) { /* leave the placeholder text */ }
+}
+refreshSurgeRate();
 
+// ── Slider helpers ─────────────────────────────────────────────
+// Day-rate is dynamic now (surge pricing). Default to the base
+// rate until `/v1/private/info` finishes loading, then live data
+// drives the days estimate. We pull from `liveDayRateAtomic` which
+// is updated by refreshSurgeRate() below.
 function fmtDollars(cents) {
 	// `cents` here is 1/100 of a dollar (so cents=10 => $0.10). Used
 	// across the sliders. Atomic USDC = cents * 10_000.
@@ -719,7 +757,8 @@ function fmtDollars(cents) {
 function centsToAtomic(cents) { return BigInt(cents) * 10_000n; }
 function daysFromAtomic(atomic) {
 	const a = typeof atomic === "bigint" ? Number(atomic) : Number(atomic);
-	return Math.max(0, a / DAY_RATE_ATOMIC);
+	const rate = liveDayRateAtomic > 0 ? liveDayRateAtomic : 20_000;
+	return Math.max(0, a / rate);
 }
 
 function bindSlider({ rangeId, usdId, daysId, presetsId, hintId, hintFn }) {
@@ -844,15 +883,52 @@ $("watch-submit").addEventListener("click", async () => {
 });
 
 // ── My watches tab handler ─────────────────────────────────────
+// Friendly status fetch. Maps server responses onto an explicit
+// `errorKind` so the renderers can show meaningful copy + decide
+// whether the row is still useful to the user. Distinct kinds:
+//   "ok"        — the server returned the watch summary
+//   "not_found" — 404, the server has no row with this id (expired,
+//                 cancelled, never reached the server, or our DB
+//                 was reset — see Backups in SYSTEM_BIBLE)
+//   "forbidden" — 403, the server has a row but our local token
+//                 doesn't match the stored hash
+//   "service"   — 5xx or non-JSON; transient server problem
+//   "network"   — fetch threw or the response wasn't JSON
 async function fetchStatus(w) {
 	try {
 		const r = await fetch(`${API_BASE}/v1/private/watch/${encodeURIComponent(w.id)}`, {
 			headers: { "x-watch-token": w.token }
 		});
-		if (!r.ok) return { error: "HTTP " + r.status };
-		return await r.json();
+		if (r.ok) {
+			const body = await r.json();
+			return { errorKind: "ok", ...body };
+		}
+		if (r.status === 404) return { errorKind: "not_found", error: "Watch not found on the server" };
+		if (r.status === 403) return { errorKind: "forbidden", error: "Watch token mismatch" };
+		return { errorKind: "service", error: "Server returned HTTP " + r.status };
 	}
-	catch (err) { return { error: err?.message ?? String(err) }; }
+	catch (err) {
+		return { errorKind: "network", error: err?.message ?? String(err) };
+	}
+}
+
+// Map a fetchStatus result to a short, human-readable hint
+// rendered on stale/error rows. Returns plain text (callers wrap
+// in a span). Centralised so the My-Watches table + the
+// Credit-tab cards stay in sync.
+function statusHint(status) {
+	switch (status?.errorKind) {
+		case "not_found":
+			return "Server has no record of this watch. It may have expired, been cancelled, or been lost — try Forget to clear it from this browser.";
+		case "forbidden":
+			return "The watchToken stored in this browser doesn't match the server. Top-up + management endpoints will reject calls from here; you can still receive webhooks. Forget to remove the stale row.";
+		case "service":
+			return "API returned a server error. Refresh in a moment; if it persists check stats.seneschal.space.";
+		case "network":
+			return "Couldn't reach the API from this browser (network blocked, DNS, captive portal?). The watch itself may be fine.";
+		default:
+			return status?.error ?? "Unknown error";
+	}
 }
 
 function fmtUsd(atomic) {
@@ -893,7 +969,11 @@ async function renderWatches() {
 			const stateEl = $("state-" + w.id);
 			const lastEl  = $("last-" + w.id);
 			if (!stateEl) return;
-			if (status.error) { stateEl.innerHTML = `<span style="color:var(--danger)">${esc(status.error)}</span>`; return; }
+			if (status.errorKind && status.errorKind !== "ok") {
+				stateEl.innerHTML = `<span style="color:var(--danger)">${esc(status.error)}</span><br><span class="muted" style="font-size:0.82em">${esc(statusHint(status))}</span>`;
+				if (lastEl) lastEl.innerHTML = `<span class="muted">—</span>`;
+				return;
+			}
 			const credit = status.credit ?? {};
 			const stateLabel = status.state ?? "?";
 			const lowFlag = credit.low_credit ? ' <span style="color:var(--warn)">⚠ LOW</span>' : "";
@@ -1010,8 +1090,13 @@ async function renderCredit() {
 		const idAttr = esc(w.id);
 		return `
 		<div class="watch-card" id="credit-card-${idAttr}">
-			<h4>${esc(w.chain)} · ${esc(w.address.slice(0, 18))}…</h4>
-			<div class="meta">${esc(w.id)}</div>
+			<div style="display:flex;justify-content:space-between;align-items:start;gap:0.6em">
+				<div style="min-width:0;flex:1">
+					<h4>${esc(w.chain)} · ${esc(w.address.slice(0, 18))}…</h4>
+					<div class="meta">${esc(w.id)}</div>
+				</div>
+				<button type="button" class="action ghost" data-act="credit-forget" data-id="${idAttr}" title="Remove this watch from this browser's local list. The watch keeps running on the server (if it exists there) — this only clears your local copy of the watchId + token + secret.">Forget</button>
+			</div>
 			<div id="credit-state-${idAttr}" class="meta" style="margin-top:0.4em">loading…</div>
 			<div class="bar" id="credit-bar-${idAttr}"><div style="width:0%"></div></div>
 			<div class="slider-row" style="margin-top:0.8em">
@@ -1030,6 +1115,18 @@ async function renderCredit() {
 		</div>`;
 	}).join("");
 	listEl.innerHTML = cards;
+	// Bind Forget buttons (one-shot — they remove the card from the
+	// local list and re-render).
+	listEl.querySelectorAll('button[data-act="credit-forget"]').forEach((b) => {
+		b.addEventListener("click", () => {
+			const id = b.dataset.id;
+			const remaining = loadWatches().filter((x) => x.id !== id);
+			saveWatches(remaining);
+			renderCredit();
+			refreshWatchesCount();
+			setResult("credit-result", "info", `<label>Forgot ${esc(id.slice(0, 8))}…</label>Removed from this browser. If the watch is still on the server you can recover it by re-importing the JSON backup, or contact us via Telegram if you need help.`);
+		});
+	});
 	// Wire each card's slider + button.
 	const totals = { atomic: 0, lowAtomic: Infinity, daysSum: 0, daysCount: 0 };
 	for (const w of watches) {
@@ -1077,8 +1174,17 @@ async function renderCredit() {
 			const stateEl = $("credit-state-" + id);
 			const barEl = $("credit-bar-" + id);
 			if (!stateEl) return;
-			if (status.error) {
-				stateEl.innerHTML = `<span style="color:var(--danger)">${esc(status.error)}</span>`;
+			if (status.errorKind && status.errorKind !== "ok") {
+				const colour = status.errorKind === "not_found" || status.errorKind === "forbidden" ? "var(--warn)" : "var(--danger)";
+				stateEl.innerHTML = `<strong style="color:${colour}">${esc(status.error)}</strong><br><span class="muted" style="font-size:0.88em">${esc(statusHint(status))}</span>`;
+				barEl.style.display = "none";
+				// Top-up button is meaningless when the server has no
+				// row — disable it and re-label.
+				if (status.errorKind === "not_found" || status.errorKind === "forbidden") {
+					btn.disabled = true;
+					btn.textContent = "Top up disabled (no server row)";
+					btn.title = "Topping up a watch the server doesn't know about would charge you without crediting anything. Use Forget to remove this entry, then create a new watch.";
+				}
 				return;
 			}
 			const credit = status.credit ?? {};

@@ -77,6 +77,7 @@ import {
 	buildPrivateInfo,
 	buildCreditBlock,
 	buildSyntheticTestBody,
+	effectiveRatesForRow,
 	WATCH_CONSTANTS
 } from './private-watch.js';
 import { deliverWebhook } from './private-watch-poller.js';
@@ -84,6 +85,11 @@ import {
 	registerCustomTopupRoute,
 	CUSTOM_TOPUP_LIMITS
 } from './private-watch-custom.js';
+import {
+	buildPricingConfig,
+	computeWatchRate,
+	describeCurrentPricing
+} from './private-watch-pricing.js';
 
 const ONE_HOUR_MS = 60 * 60 * 1000;
 const ONE_DAY_MS = 24 * ONE_HOUR_MS;
@@ -370,9 +376,15 @@ export async function buildApp(options = {}) {
 						max_atomic: String(CUSTOM_TOPUP_LIMITS.MAX_ATOMIC),
 						step_atomic: String(CUSTOM_TOPUP_LIMITS.MIN_ATOMIC)
 					},
+					// Existing constant-rate fields kept for back-compat;
+					// the live surge numbers are below in `surge_pricing`.
 					rate_per_day_atomic: String(WATCH_CONSTANTS.DAY_RATE_ATOMIC),
 					rate_per_call_atomic: String(WATCH_CONSTANTS.CALL_RATE_ATOMIC),
 					low_credit_threshold_atomic: String(WATCH_CONSTANTS.LOW_CREDIT_THRESHOLD_ATOMIC),
+					surge_pricing: describeCurrentPricing({
+						pricing: pricingCfg,
+						activeWatches: storeStatsSnapshot(watchDb)?.active ?? 0
+					}),
 					poll_interval_sec: config.privateWatchPollIntervalSec,
 					stats: storeStatsSnapshot(watchDb)
 				};
@@ -604,6 +616,10 @@ export async function buildApp(options = {}) {
 	// for a Monero or Zcash address. The scanner work happens in NFPT
 	// (local box at 3555); we own state, paywall, webhook signing.
 	const privateWatchEnabled = Boolean(config.privateWatchEncryptionKey);
+	// Pricing config is cheap to build (just env reads + validation)
+	// so we do it unconditionally. The watch-creation handler reads
+	// it to compute the surge factor for each new row.
+	const pricingCfg = buildPricingConfig(config);
 	let watchDb = options.watchDb ?? null;
 	let watchMasterKey = options.watchMasterKey ?? null;
 	let nfptClient = options.nfptClient ?? null;
@@ -658,11 +674,22 @@ export async function buildApp(options = {}) {
 		const nfptHealth = privateWatchReady()
 			? await safeHealth(nfptClient)
 			: { ok: false, reason: 'private watch disabled' };
-		return buildPrivateInfo({
+		const info = buildPrivateInfo({
 			x402Cfg,
 			nfptHealth,
 			requireHttps: privateWatchRequireHttps
 		});
+		// Layer the live surge data on top of the static info
+		// block so a caller can see what their *next* watch would
+		// cost without first paying for one.
+		if (watchDb) {
+			const snap = storeStatsSnapshot(watchDb);
+			info.surge_pricing = describeCurrentPricing({
+				pricing: pricingCfg,
+				activeWatches: snap?.active ?? 0
+			});
+		}
+		return info;
 	});
 
 	app.get('/v1/private/health', async () => {
@@ -706,6 +733,11 @@ export async function buildApp(options = {}) {
 		}
 		const viewKeyCiphertext = encryptViewKey(input.viewKey, watchMasterKey);
 		const webhookSecret = generateWebhookSecret();
+		// Surge pricing: snap the rate for this new watch off the
+		// current active-watch count and lock it in for the row's
+		// lifetime. Existing watches keep their cheaper rate.
+		const snapshot = storeStatsSnapshot(watchDb);
+		const rate = computeWatchRate({ ...pricingCfg, activeWatches: snapshot?.active ?? 0 });
 		const created = storeCreateWatch(watchDb, {
 			chain: input.chain,
 			address: input.address,
@@ -714,7 +746,9 @@ export async function buildApp(options = {}) {
 			webhookSecret,
 			birthdayHeight: input.birthdayHeight,
 			creditAtomic: WATCH_CONSTANTS.STARTER_CREDIT_ATOMIC,
-			dayRateAtomic: WATCH_CONSTANTS.DAY_RATE_ATOMIC,
+			dayRateAtomic: rate.dayRateAtomic,
+			callRateAtomic: rate.callRateAtomic,
+			lowCreditThresholdAtomic: rate.lowCreditThresholdAtomic,
 			maxLifetimeMs: WATCH_CONSTANTS.MAX_WATCH_LIFETIME_MS,
 			nowMs: input.now
 		});
@@ -722,7 +756,11 @@ export async function buildApp(options = {}) {
 			watchId: created.id,
 			chain: input.chain,
 			webhookHost: safeHost(input.webhookUrl),
-			creditAtomic: created.creditAtomic
+			creditAtomic: created.creditAtomic,
+			dayRateAtomic: rate.dayRateAtomic,
+			callRateAtomic: rate.callRateAtomic,
+			activeWatchesAtCreation: rate.activeWatches,
+			tier: rate.source
 		}, 'private-watch: created');
 		return {
 			watchId: created.id,
@@ -734,8 +772,11 @@ export async function buildApp(options = {}) {
 			creditAtomic: String(created.creditAtomic),
 			expiresAt: new Date(created.expiresAt).toISOString(),
 			pollIntervalSec: WATCH_CONSTANTS.DEFAULT_POLL_INTERVAL_SEC,
-			ratePerDayAtomic: String(WATCH_CONSTANTS.DAY_RATE_ATOMIC),
-			ratePerCallAtomic: String(WATCH_CONSTANTS.CALL_RATE_ATOMIC),
+			ratePerDayAtomic: String(rate.dayRateAtomic),
+			ratePerCallAtomic: String(rate.callRateAtomic),
+			lowCreditThresholdAtomic: String(rate.lowCreditThresholdAtomic),
+			pricingTier: rate.source,
+			activeWatchesAtCreation: rate.activeWatches,
 			topupEndpoints: {
 				'10c': '/v1/private/topup',
 				'1usd': '/v1/private/topup-1',
@@ -765,10 +806,17 @@ export async function buildApp(options = {}) {
 			catch (err) {
 				return reply.code(400).send({ error: { code: 'invalid_request', message: err?.message ?? String(err) } });
 			}
+			// Read the watch's locked-in rate so top-up math + the
+			// low-credit threshold both honour the surge price that
+			// applied when the watch was created.
+			const existing = storeGetWatch(watchDb, body.watchId, body.watchToken);
+			const ratesForTopup = existing && !existing.error
+				? effectiveRatesForRow(existing)
+				: { dayRateAtomic: WATCH_CONSTANTS.DAY_RATE_ATOMIC, lowCreditThresholdAtomic: WATCH_CONSTANTS.LOW_CREDIT_THRESHOLD_ATOMIC };
 			const out = storeTopupWatch(watchDb, body.watchId, body.watchToken, {
 				creditAtomic,
-				dayRateAtomic: WATCH_CONSTANTS.DAY_RATE_ATOMIC,
-				lowThresholdAtomic: WATCH_CONSTANTS.LOW_CREDIT_THRESHOLD_ATOMIC,
+				dayRateAtomic: ratesForTopup.dayRateAtomic,
+				lowThresholdAtomic: ratesForTopup.lowCreditThresholdAtomic,
 				maxLifetimeMs: WATCH_CONSTANTS.MAX_WATCH_LIFETIME_MS
 			});
 			if (!out.ok) {
