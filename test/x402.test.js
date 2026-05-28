@@ -4,7 +4,7 @@
 // REST integration tests.
 
 import { describe, test, expect } from '@jest/globals';
-import { buildX402Config, describePaywall, discoveryConfigForRouteKey, PREMIUM_ROUTES } from '../src/x402.js';
+import { buildX402Config, describePaywall, discoveryConfigForRouteKey, createFacilitatorClient, CDP_FACILITATOR_URL, PREMIUM_ROUTES } from '../src/x402.js';
 import { declareDiscoveryExtension, validateDiscoveryExtension } from '@x402/extensions/bazaar';
 import { checkIfBazaarNeeded } from '@x402/core/server';
 
@@ -113,6 +113,40 @@ describe('buildX402Config', () => {
 		});
 		expect(cfg.enabled).toBe(true);
 	});
+
+	test('defaults to url facilitator mode with no CDP creds', () => {
+		const cfg = buildX402Config({ cfg: baseCfg(), env: {} });
+		expect(cfg.facilitatorMode).toBe('url');
+		expect(cfg.facilitatorUrl).toBe('https://x402.org/facilitator');
+	});
+
+	test('switches to CDP facilitator mode when both CDP creds are present', () => {
+		const cfg = buildX402Config({
+			cfg: baseCfg({ x402CdpApiKeyId: 'key-id', x402CdpApiKeySecret: 'key-secret' }),
+			env: {}
+		});
+		expect(cfg.facilitatorMode).toBe('cdp');
+		// CDP mode pins the Coinbase facilitator URL, ignoring the
+		// openx402 default — presence of keys is the unambiguous signal.
+		expect(cfg.facilitatorUrl).toBe(CDP_FACILITATOR_URL);
+	});
+
+	test('stays in url mode when only one CDP cred is present (partial config is not CDP)', () => {
+		const idOnly = buildX402Config({ cfg: baseCfg({ x402CdpApiKeyId: 'key-id' }), env: {} });
+		expect(idOnly.facilitatorMode).toBe('url');
+		expect(idOnly.facilitatorUrl).toBe('https://x402.org/facilitator');
+		const secretOnly = buildX402Config({ cfg: baseCfg({ x402CdpApiKeySecret: 'key-secret' }), env: {} });
+		expect(secretOnly.facilitatorMode).toBe('url');
+	});
+});
+
+describe('createFacilitatorClient', () => {
+	test('rejects in cdp mode when credentials are missing (before loading the x402 stack)', async () => {
+		await expect(createFacilitatorClient(
+			{ enabled: true, facilitatorMode: 'cdp', facilitatorUrl: CDP_FACILITATOR_URL },
+			{ cfg: { x402CdpApiKeyId: '', x402CdpApiKeySecret: '' } }
+		)).rejects.toThrow(/CDP API credentials are missing/);
+	});
 });
 
 describe('describePaywall', () => {
@@ -135,6 +169,19 @@ describe('describePaywall', () => {
 		expect(route.price).toBe('$0.05');
 		expect(route.mime_type).toBe('application/json');
 		expect(typeof route.description).toBe('string');
+	});
+
+	test('reports facilitator_mode for the discovery surface', () => {
+		const urlCfg = buildX402Config({ cfg: baseCfg(), env: {} });
+		expect(describePaywall(urlCfg).facilitator_mode).toBe('url');
+
+		const cdpCfg = buildX402Config({
+			cfg: baseCfg({ x402CdpApiKeyId: 'a', x402CdpApiKeySecret: 'b' }),
+			env: {}
+		});
+		const cdpDesc = describePaywall(cdpCfg);
+		expect(cdpDesc.facilitator_mode).toBe('cdp');
+		expect(cdpDesc.facilitator).toBe(CDP_FACILITATOR_URL);
 	});
 });
 

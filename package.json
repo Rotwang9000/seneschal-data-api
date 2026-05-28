@@ -15,6 +15,7 @@
 		"test:watch": "node --experimental-vm-modules node_modules/.bin/jest --watch"
 	},
 	"dependencies": {
+		"@coinbase/x402": "^2.1.0",
 		"@fastify/cors": "^11.2.0",
 		"@fastify/rate-limit": "^10.3.0",
 		"@modelcontextprotocol/sdk": "^1.29.0",

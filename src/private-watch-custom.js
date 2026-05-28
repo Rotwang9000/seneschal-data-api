@@ -33,6 +33,7 @@ import {
 	effectiveRatesForRow
 } from './private-watch.js';
 import { topupWatch as storeTopupWatch, getWatch as storeGetWatch } from './private-watch-store.js';
+import { createFacilitatorClient } from './x402.js';
 
 /**
  * Canonical USDC addresses per CAIP-2 network. Anything outside
@@ -162,18 +163,24 @@ export function decodePaymentHeader(headerValue) {
 }
 
 /**
- * Lazy-loaded HTTPFacilitatorClient. The @x402 toolchain depends
- * on viem + a handful of other ESM modules that take ~250 ms to
- * pull in cold; only instantiate when the first dynamic-topup
- * request actually arrives. We cache the constructor (not the
- * instance) so the test suite can swap in a fake.
+ * Lazy-loaded facilitator client. The @x402 toolchain depends on
+ * viem + a handful of other ESM modules that take ~250 ms to pull in
+ * cold; only instantiate when the first dynamic-topup request
+ * actually arrives. We cache the promise (not the instance) so the
+ * test suite can swap in a fake.
+ *
+ * Delegates to the shared `createFacilitatorClient` selector so the
+ * dynamic top-up settles through the *same* facilitator (CDP or
+ * openx402) as the static @x402/fastify routes — otherwise a payment
+ * signed against our challenge could be verified against the wrong
+ * facilitator. Receives the whole `x402Cfg` (not just a URL) because
+ * CDP mode needs the credentials, not an endpoint.
  *
  * Tests inject a fake via the `facilitatorFactory` argument to
  * `registerCustomTopupRoute`.
  */
-async function defaultFacilitatorFactory(url) {
-	const { HTTPFacilitatorClient } = await import('@x402/core/server');
-	return new HTTPFacilitatorClient({ url });
+async function defaultFacilitatorFactory(x402Cfg) {
+	return createFacilitatorClient(x402Cfg);
 }
 
 /**
@@ -223,7 +230,7 @@ export function registerCustomTopupRoute(app, deps) {
 			throw new Error('x402 paywall disabled; cannot dispatch to facilitator');
 		}
 		if (!facilitatorP) {
-			facilitatorP = Promise.resolve(facilitatorFactory(x402Cfg.facilitatorUrl));
+			facilitatorP = Promise.resolve(facilitatorFactory(x402Cfg));
 		}
 		return facilitatorP;
 	}

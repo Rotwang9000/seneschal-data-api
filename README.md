@@ -198,7 +198,8 @@ EIP-3009 `transferWithAuthorization` for USDC on Base mainnet.
 | -------------------------- | -------------------------------- | ---------------------------------------------------------------------- |
 | `X402_RECIPIENT_ADDRESS`   | (empty — paywall off)            | Recipient wallet on the chosen network. 0x-prefixed 20-byte hex.       |
 | `X402_NETWORK`             | `eip155:8453` (Base mainnet)     | Any CAIP-2 EVM network the facilitator supports.                       |
-| `X402_FACILITATOR_URL`     | `https://x402.org/facilitator`   | Use a production facilitator for mainnet (see x402.org/ecosystem).     |
+| `COINBASE_API_KEY` + `COINBASE_API_SECRET` | (empty) | **Recommended.** A [CDP API key](https://docs.cdp.coinbase.com/x402/quickstart-for-sellers). When both are set, settlement routes through Coinbase's hosted facilitator (`api.cdp.coinbase.com/platform/v2/x402`) and the service is auto-listed in the **Coinbase x402 Bazaar**. No business/KYB verification needed; 1k free settlements/month. Accepts `X402_CDP_API_KEY_ID` / `CDP_API_KEY_ID` aliases. |
+| `X402_FACILITATOR_URL`     | `https://facilitator.openx402.ai` | Fallback facilitator used only when no CDP credentials are set.        |
 | `X402_FEED_PRICE`          | `$0.05`                          | Money-formatted (`$0.05`) or atomic units (`50000`).                   |
 | `X402_PAYWALL_DESCRIPTION` | …                                | Shown on `/`, `/v1/paywall`, and the stats dashboard.                  |
 | `X402_MAX_TIMEOUT_SECONDS` | `120`                            | Maximum settlement window per call.                                    |

@@ -681,18 +681,20 @@ Payment uses the <a href="https://docs.x402.org">x402 protocol</a>
 <code>Payment-Required</code> header carrying machine-readable
 <code>PaymentRequirements</code>; the client signs an EIP-3009
 <code>transferWithAuthorization</code> off-chain and retries with a
-<code>X-PAYMENT</code> header. We delegate verify + settle to the
-<a href="https://facilitator.openx402.ai">openx402.ai</a> facilitator,
-which broadcasts the EIP-3009 transfer on Base. No API keys, no
-subscriptions, no gas for the payer — the facilitator pays the gas
-and stays solvent from a small spread on the underlying USDC.
+<code>X-PAYMENT</code> header. We delegate verify + settle to
+<a href="https://docs.cdp.coinbase.com/x402/welcome">Coinbase&rsquo;s CDP</a>
+facilitator, which broadcasts the EIP-3009 transfer on Base. No API
+keys for the payer, no subscriptions, no gas for the payer — the
+facilitator pays the gas. (Settling through Coinbase also lists the
+service in the Coinbase x402 Bazaar.)
 </p>
 <p>
 Free metadata endpoint for budgeting before any paid call:
 </p>
 <pre><code>curl https://api.seneschal.space/v1/paywall
 # → {"protocol":"x402","network":"eip155:8453",
-#    "facilitator":"https://facilitator.openx402.ai",
+#    "facilitator":"https://api.cdp.coinbase.com/platform/v2/x402",
+#    "facilitator_mode":"cdp",
 #    "payTo":"0x46Ba634261566CF242c853d1f49511f9268ba674",
 #    "scheme":"exact (EIP-3009 transferWithAuthorization)",
 #    "routes":[{"endpoint":"GET /v1/premium/opportunities","price":"$0.05",...},

@@ -182,7 +182,7 @@ footer { color: var(--muted); font-size: 0.9em; margin-top: 3em; padding-top: 1e
 <!-- ── New watch ───────────────────────────────────────────────── -->
 <section class="panel active" id="panel-watch">
 	<h2>Create a new payment-monitoring watch</h2>
-	<p class="muted">You'll be asked to sign an <code>EIP-3009 transferWithAuthorization</code> for $0.10 USDC on Base. Once payment is verified by the openx402 facilitator the watch is created with $0.10 of starter credit (~5 idle days at the $0.02/day rate). Top up any time.</p>
+	<p class="muted">You'll be asked to sign an <code>EIP-3009 transferWithAuthorization</code> for $0.10 USDC on Base. Once payment is verified by Coinbase's x402 facilitator the watch is created with $0.10 of starter credit (~5 idle days at the $0.02/day rate). Top up any time.</p>
 
 	<label class="field" for="w-chain">Chain</label>
 	<select id="w-chain">
@@ -418,7 +418,7 @@ const { credit } = await r.json();</code></pre>
 //      topup-5,historical}) it pulls the x402 challenge from the
 //      `payment-required` response header, asks the wallet to sign
 //      an EIP-3009 transferWithAuthorization, and resubmits with the
-//      base64-encoded `x-payment` header. The openx402 facilitator
+//      base64-encoded `x-payment` header. Coinbase's CDP facilitator
 //      handles settlement; we never see a private key.
 //   4. Persists created watches in localStorage so the user can top
 //      up / poll / cancel them later — server has no concept of

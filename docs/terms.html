@@ -40,7 +40,7 @@ footer { color: var(--muted); font-size: 0.88em; margin-top: 3em; padding-top: 1
 <h1>Terms of service</h1>
 <p class="meta">Effective 2026-05-22. By using any paid endpoint on <code>api.seneschal.space</code> or the control panel at <code>panel.seneschal.space</code> you agree to these terms.</p>
 
-<div class="callout danger"><strong>No refunds.</strong> All Seneschal payments settle on-chain through the openx402 facilitator. We cannot reverse a settled USDC transfer. There are no refunds for any reason, including but not limited to accidental cancellation, browser data loss, or buyer&rsquo;s remorse. Top up only what you need.</div>
+<div class="callout danger"><strong>No refunds.</strong> All Seneschal payments settle on-chain through Coinbase&rsquo;s x402 facilitator. We cannot reverse a settled USDC transfer. There are no refunds for any reason, including but not limited to accidental cancellation, browser data loss, or buyer&rsquo;s remorse. Top up only what you need.</div>
 
 <h2>1. Definitions</h2>
 <ul>
@@ -74,7 +74,7 @@ footer { color: var(--muted); font-size: 0.88em; margin-top: 3em; padding-top: 1
 <h2>5. Fees, billing &amp; the credit meter</h2>
 <ul>
 	<li>All prices are denominated in USDC on Base mainnet (CAIP-2 <code>eip155:8453</code>). Live prices are exposed at <a href="https://api.seneschal.space/v1/private/info"><code>/v1/private/info</code></a> and <a href="https://api.seneschal.space/.well-known/x402"><code>/.well-known/x402</code></a>.</li>
-	<li>Payments use the <a href="https://docs.x402.org">x402 protocol</a>: you sign an EIP-3009 <code>transferWithAuthorization</code>, the openx402 facilitator settles it on-chain, we credit your Watch.</li>
+	<li>Payments use the <a href="https://docs.x402.org">x402 protocol</a>: you sign an EIP-3009 <code>transferWithAuthorization</code>, Coinbase&rsquo;s x402 facilitator settles it on-chain, we credit your Watch.</li>
 	<li>Watches drain credit at a per-day idle rate plus a per-webhook delivery rate. Both rates are published in <code>/v1/private/info</code>. The rates may change with at least 7 days&rsquo; notice on this page; we will not retro-bill credit you have already prepaid.</li>
 	<li>A one-shot <code>low_credit</code> webhook fires when your balance falls below the documented threshold so you have time to top up before the Watch pauses.</li>
 	<li>Top-ups are available in fixed tiers ($0.10 / $1 / $5) and in any variable amount from $0.10 to $25 via <code>/v1/private/topup-custom</code> (also exposed via the control panel slider).</li>

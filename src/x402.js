@@ -22,6 +22,13 @@ import config from './config.js';
 
 const ADDRESS_RE = /^0x[0-9a-fA-F]{40}$/u;
 
+// Coinbase Developer Platform hosted facilitator. Used automatically
+// when CDP API credentials are configured (see buildX402Config). Lands
+// the service in Coinbase's x402 Bazaar and gives a 1k-settlement/month
+// free tier. Verified against the live /supported endpoint — `exact`
+// on eip155:8453 (Base) is supported.
+export const CDP_FACILITATOR_URL = 'https://api.cdp.coinbase.com/platform/v2/x402';
+
 // Premium endpoints we'll wire up. Keep this in one place so the
 // systemd unit, the README, and the MCP tool descriptions all stay in
 // sync — touch one constant, the rest follow.
@@ -155,9 +162,22 @@ export function buildX402Config({ cfg = config, env = process.env } = {}) {
 	if (!/^eip155:\d+$/u.test(network)) {
 		throw new TypeError(`x402: X402_NETWORK=${network} must be a CAIP-2 identifier such as 'eip155:8453'`);
 	}
-	const facilitatorUrl = (cfg.x402FacilitatorUrl || '').trim();
+	// Facilitator selection. Presence of *both* CDP credentials is the
+	// single, unambiguous signal "settle through Coinbase" — it flips us
+	// to the CDP facilitator URL and CDP auth mode, ignoring the openx402
+	// default. With no (or partial) CDP creds we fall back to the
+	// configured permissionless URL (openx402 by default,
+	// X402_FACILITATOR_URL to override). Keeping the rule this simple
+	// avoids the "explicit URL silently wins over my new keys" footgun.
+	const cdpId = (cfg.x402CdpApiKeyId || '').trim();
+	const cdpSecret = (cfg.x402CdpApiKeySecret || '').trim();
+	const cdpConfigured = Boolean(cdpId && cdpSecret);
+	const facilitatorMode = cdpConfigured ? 'cdp' : 'url';
+	const facilitatorUrl = cdpConfigured
+		? CDP_FACILITATOR_URL
+		: (cfg.x402FacilitatorUrl || '').trim();
 	if (!facilitatorUrl || !/^https?:\/\//u.test(facilitatorUrl)) {
-		throw new TypeError(`x402: X402_FACILITATOR_URL=${facilitatorUrl} must be an http(s) URL`);
+		throw new TypeError(`x402: facilitator URL "${facilitatorUrl}" must be an http(s) URL`);
 	}
 	// Build the per-route table the @x402/fastify middleware wants.
 	// Pattern is `"<METHOD> <path>"` per the package docs.
@@ -182,10 +202,49 @@ export function buildX402Config({ cfg = config, env = process.env } = {}) {
 		recipient,
 		network,
 		facilitatorUrl,
+		// 'cdp' → authenticate verify/settle with the operator's CDP API
+		// key; 'url' → plain permissionless facilitator. The secret is
+		// never stored on this object (it'd leak through describePaywall);
+		// createFacilitatorClient re-reads it from cfg at dispatch time.
+		facilitatorMode,
 		routes,
 		// Keep the raw route descriptors handy for docs / MCP surfaces.
 		premiumRoutes: PREMIUM_ROUTES
 	});
+}
+
+/**
+ * Build the facilitator client the paywall dispatches verify/settle to.
+ * Shared by `registerX402` (the static @x402/fastify routes) and the
+ * dynamic custom-topup route, so the CDP-vs-URL decision lives in
+ * exactly one place.
+ *
+ * `facilitatorMode === 'cdp'` authenticates every verify/settle call
+ * with the operator's CDP API key via @coinbase/x402's
+ * `createFacilitatorConfig` (it signs a short-lived JWT per request and
+ * targets the CDP facilitator URL). Otherwise we return a plain
+ * unauthenticated client against `x402Cfg.facilitatorUrl`.
+ *
+ * Credentials are read from `cfg` here, at dispatch time, and never
+ * touch the frozen `x402Cfg`/`describePaywall` surfaces. The
+ * missing-creds guard runs *before* any dynamic import so the failure
+ * is cheap and testable without loading the wagmi/viem stack.
+ */
+export async function createFacilitatorClient(x402Cfg, { cfg = config } = {}) {
+	if (x402Cfg.facilitatorMode === 'cdp') {
+		const id = (cfg.x402CdpApiKeyId || '').trim();
+		const secret = (cfg.x402CdpApiKeySecret || '').trim();
+		if (!id || !secret) {
+			throw new Error('x402: facilitatorMode=cdp but CDP API credentials are missing — set X402_CDP_API_KEY_ID + X402_CDP_API_KEY_SECRET (or COINBASE_API_KEY + COINBASE_API_SECRET)');
+		}
+		const [{ HTTPFacilitatorClient }, { createFacilitatorConfig }] = await Promise.all([
+			import('@x402/core/server'),
+			import('@coinbase/x402')
+		]);
+		return new HTTPFacilitatorClient(createFacilitatorConfig(id, secret));
+	}
+	const { HTTPFacilitatorClient } = await import('@x402/core/server');
+	return new HTTPFacilitatorClient({ url: x402Cfg.facilitatorUrl });
 }
 
 function envKeyToCfg(envKey) {
@@ -245,18 +304,19 @@ export async function registerX402(app, x402Cfg) {
 	// premium URL in their browser we'd rather they see the structured
 	// 402 JSON than an opinionated wallet-connect dialog they can't
 	// use anyway.
-	const [{ paymentMiddlewareFromConfig }, { HTTPFacilitatorClient }, { ExactEvmScheme }, { declareDiscoveryExtension }] = await Promise.all([
+	const [{ paymentMiddlewareFromConfig }, { ExactEvmScheme }, { declareDiscoveryExtension }] = await Promise.all([
 		import('@x402/fastify'),
-		import('@x402/core/server'),
 		import('@x402/evm/exact/server'),
-		// Bazaar discovery: lets the facilitator we already use
-		// (openx402) catalogue our paid routes in its public
-		// `/discovery/resources` index once each route has settled at
-		// least one payment. Loaded lazily with the rest of the x402
-		// stack so the API still boots clean when the paywall is off.
+		// Bazaar discovery: lets the facilitator we settle through
+		// (CDP or openx402) catalogue our paid routes in its public
+		// discovery index once each route has settled at least one
+		// payment. Loaded lazily with the rest of the x402 stack so the
+		// API still boots clean when the paywall is off.
 		import('@x402/extensions/bazaar')
 	]);
-	const facilitatorClient = new HTTPFacilitatorClient({ url: x402Cfg.facilitatorUrl });
+	// Shared selector: CDP-authenticated client when CDP creds are set,
+	// otherwise a plain client against the configured URL.
+	const facilitatorClient = await createFacilitatorClient(x402Cfg);
 	const schemes = [{ network: x402Cfg.network, server: new ExactEvmScheme() }];
 	// Decorate each route with a bazaar discovery extension. Additive
 	// metadata only — @x402/fastify detects `extensions.bazaar`, enriches
@@ -308,6 +368,9 @@ export function describePaywall(x402Cfg) {
 		spec: 'https://docs.x402.org',
 		network: x402Cfg.network,
 		facilitator: x402Cfg.facilitatorUrl,
+		// 'cdp' = Coinbase Developer Platform hosted facilitator (also
+		// catalogues us in Coinbase's Bazaar); 'url' = permissionless.
+		facilitator_mode: x402Cfg.facilitatorMode ?? 'url',
 		payTo: x402Cfg.recipient,
 		scheme: 'exact (EIP-3009 transferWithAuthorization)',
 		asset_note: 'Network resolves the canonical USDC contract; clients should consult the facilitator /supported endpoint for the address.',

@@ -79,6 +79,21 @@ export const config = Object.freeze({
 	// USDC with proper EIP-712 metadata. Override at any time via
 	// X402_FACILITATOR_URL.
 	x402FacilitatorUrl: asString('X402_FACILITATOR_URL', 'https://facilitator.openx402.ai'),
+	// Coinbase Developer Platform (CDP) facilitator credentials. When
+	// BOTH are present the paywall routes settlement through Coinbase's
+	// hosted facilitator (api.cdp.coinbase.com/platform/v2/x402) instead
+	// of the permissionless openx402 URL above. Two wins from that:
+	//   1. The service is auto-catalogued in *Coinbase's* x402 Bazaar —
+	//      the largest discovery surface for agent buyers.
+	//   2. Free tier of 1,000 settlements/month, then $0.001 each.
+	// No business/KYB verification is required: a plain CDP API key is
+	// enough to *receive* x402 payments to your own wallet (verified
+	// against the live /supported endpoint). We accept the generic
+	// COINBASE_API_KEY / COINBASE_API_SECRET names too, since that's the
+	// pair the CDP portal hands you, with X402_CDP_* / CDP_* overrides
+	// for operators who keep separate keys per service.
+	x402CdpApiKeyId: asString('X402_CDP_API_KEY_ID', asString('CDP_API_KEY_ID', asString('COINBASE_API_KEY', ''))),
+	x402CdpApiKeySecret: asString('X402_CDP_API_KEY_SECRET', asString('CDP_API_KEY_SECRET', asString('COINBASE_API_SECRET', ''))),
 	// Price per call for each premium endpoint, expressed in the x402
 	// Money format ("$0.05" = 5 ¢). The facilitator quotes the USDC
 	// atomic amount on Base from this.

@@ -42,7 +42,7 @@ footer { color: var(--muted); font-size: 0.88em; margin-top: 3em; padding-top: 1
 <h1>Privacy policy</h1>
 <p class="meta">Effective 2026-05-22. Service operated under the brand name <strong>Seneschal</strong>.</p>
 
-<div class="callout info"><strong>Short version.</strong> We don&rsquo;t want your data. We store the minimum needed to deliver the service you paid for, encrypt the sensitive bits at rest, share with no one except the openx402 payment facilitator and the webhook endpoint <em>you</em> chose, and delete it all when you cancel. No cookies, no analytics, no accounts, no email, no name.</p></div>
+<div class="callout info"><strong>Short version.</strong> We don&rsquo;t want your data. We store the minimum needed to deliver the service you paid for, encrypt the sensitive bits at rest, share with no one except Coinbase&rsquo;s x402 payment facilitator and the webhook endpoint <em>you</em> chose, and delete it all when you cancel. No cookies, no analytics, no accounts, no email, no name.</p></div>
 
 <h2>1. Who we are</h2>
 <p>Seneschal is an anonymous, open-source operator of an Ethereum block builder plus a small bundle of paid data services (Private Watch, premium liquidation feeds, agent-payable single-fact endpoints). The natural person behind it operates pseudonymously as <code>Rotwang9000</code>. There is no registered company.</p>
@@ -74,7 +74,7 @@ footer { color: var(--muted); font-size: 0.88em; margin-top: 3em; padding-top: 1
 
 <h2>4. Who we share data with</h2>
 <ul>
-	<li><strong>openx402 facilitator</strong> (<a href="https://facilitator.openx402.ai">facilitator.openx402.ai</a>). Verifies and settles your USDC payments on Base. Sees the payer address (you), the recipient address (us), the amount, and your signature. Does <em>not</em> see your view key, address, or webhook URL.</li>
+	<li><strong>Coinbase Developer Platform (CDP) x402 facilitator</strong> (<a href="https://docs.cdp.coinbase.com/x402/welcome"><code>api.cdp.coinbase.com</code></a>, operated by Coinbase). Verifies and settles your USDC payments on Base. Sees the payer address (you), the recipient address (us), the amount, and your signature, and screens the payer address against sanctions / high-risk lists (Know-Your-Transaction). Does <em>not</em> see your view key, address, or webhook URL.</li>
 	<li><strong>Your webhook endpoint.</strong> When funds land we POST a signed JSON body to the URL you gave us. You control that endpoint; we&rsquo;re a sender, not a controller.</li>
 	<li><strong>The local NFPT scanner</strong> (a Monero / Zcash full-node front-end we operate on the same machine). Receives your view key and address in memory in order to scan. Same retention as the watch row.</li>
 	<li><strong>Court orders or other lawfully binding requests.</strong> We will comply if and only if we receive a valid order in our operating jurisdiction (England &amp; Wales, see Terms §15). Because we deliberately don&rsquo;t collect identity data, there is usually nothing on you to hand over.</li>
@@ -82,7 +82,7 @@ footer { color: var(--muted); font-size: 0.88em; margin-top: 3em; padding-top: 1
 <p>We do <strong>not</strong> sell, rent, lease, or barter your data. We have no advertising partners. We have no &ldquo;data analytics&rdquo; partners. We do not enrich your data against third-party data brokers.</p>
 
 <h2>5. International transfers</h2>
-<p>Our server lives in the EU (Netherlands). The openx402 facilitator may be hosted outside the UK / EEA; transferring payment metadata to it falls under Article 49(1)(b) UK GDPR (<em>transfer necessary for performance of a contract</em>) and is limited to the payer/recipient/amount/signature tuple needed to verify the payment.</p>
+<p>Our server lives in the EU (Netherlands). Coinbase&rsquo;s CDP facilitator is operated from the United States; transferring payment metadata to it falls under Article 49(1)(b) UK GDPR (<em>transfer necessary for performance of a contract</em>) and is limited to the payer/recipient/amount/signature tuple needed to verify the payment.</p>
 
 <h2>6. Security</h2>
 <ul>
