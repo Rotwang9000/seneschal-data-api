@@ -59,7 +59,7 @@ Add this to your MCP client config (e.g. `~/.cursor/mcp.json`):
 
 This server is published to the official
 [MCP Registry](https://registry.modelcontextprotocol.io) as
-`io.github.rotwang9000/seneschal-data` (see [`server.json`](server.json)),
+`io.github.Rotwang9000/seneschal-data` (see [`server.json`](server.json)),
 so MCP-aware clients and aggregators can discover it automatically.
 
 Eighteen tools become available to your agent — free read tools, plus
