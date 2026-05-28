@@ -3,7 +3,7 @@
   "name": "io.github.Rotwang9000/seneschal-data",
   "title": "Seneschal Data",
   "description": "Monero/Zcash payment webhooks + DeFi liquidation & Ethereum builder data over MCP. Free tier; x402.",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "websiteUrl": "https://seneschal.space",
   "repository": {
     "url": "https://github.com/Rotwang9000/seneschal-data-api",
