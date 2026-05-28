@@ -1100,10 +1100,29 @@ export async function buildApp(options = {}) {
 			...paywallSummary,
 			service: {
 				name: 'Seneschal Data API',
+				description: 'On-chain DeFi liquidation + Ethereum builder telemetry and Monero/Zcash payment-watching, payable per call over x402. Free read tier, no API key.',
 				homepage: 'https://seneschal.space',
-				docs: 'https://docs.seneschal.space/#premium-tier-x402',
+				docs: 'https://docs.seneschal.space',
 				api_root: 'https://api.seneschal.space',
-				mcp: 'https://mcp.seneschal.space'
+				mcp: 'https://mcp.seneschal.space',
+				control_panel: 'https://panel.seneschal.space',
+				stats: 'https://stats.seneschal.space',
+				contact: 'https://t.me/OrknetP',
+				products: [
+					{
+						name: 'Private Watch',
+						summary: 'Watch a Monero or Zcash view key for inbound payments and receive an HMAC-signed webhook on each one. Credit-metered (per-day + per-call), no node to run.',
+						start: 'POST /v1/private/watch',
+						info: 'https://api.seneschal.space/v1/private/info',
+						panel: 'https://panel.seneschal.space'
+					},
+					{
+						name: 'DeFi + builder data',
+						summary: 'Real-time at-risk borrowers across Aave/Morpho/Spark/Compound, Ethereum builder market share, and Monero/Zcash chain facts. Free read tier; x402 premium feeds + Penny Oracle atomic facts.',
+						start: 'GET /v1/premium/opportunities',
+						info: 'https://api.seneschal.space/v1/paywall'
+					}
+				]
 			}
 		};
 	});

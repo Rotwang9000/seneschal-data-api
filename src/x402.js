@@ -195,6 +195,25 @@ function envKeyToCfg(envKey) {
 	return parts.map((p, i) => i === 0 ? p : p.charAt(0).toUpperCase() + p.slice(1)).join('');
 }
 
+/**
+ * Map a route key ("METHOD /path") to the minimal bazaar-discovery
+ * config we hand `declareDiscoveryExtension`. Body methods need an
+ * explicit `bodyType` (that's how the helper discriminates body vs
+ * query routes); query methods need nothing. We deliberately keep the
+ * declaration minimal — the route's own `description` + `mimeType`
+ * already ride along in the catalog entry, and the HTTP method is
+ * enriched at settlement time by `bazaarResourceServerExtension`, so
+ * there's nothing to drift out of sync here.
+ *
+ * Pure + exported so the wiring is unit-testable without loading the
+ * x402 payment stack.
+ */
+export function discoveryConfigForRouteKey(routeKey) {
+	const method = String(routeKey).trim().split(/\s+/u, 1)[0].toUpperCase();
+	const BODY_METHODS = new Set(['POST', 'PUT', 'PATCH']);
+	return BODY_METHODS.has(method) ? { bodyType: 'json' } : {};
+}
+
 function assertPrice(price, name) {
 	// Accept either Money strings ("$0.05") or atomic-unit strings
 	// ("50000" = 0.05 USDC at 6 decimals). The facilitator handles
@@ -226,13 +245,33 @@ export async function registerX402(app, x402Cfg) {
 	// premium URL in their browser we'd rather they see the structured
 	// 402 JSON than an opinionated wallet-connect dialog they can't
 	// use anyway.
-	const [{ paymentMiddlewareFromConfig }, { HTTPFacilitatorClient }, { ExactEvmScheme }] = await Promise.all([
+	const [{ paymentMiddlewareFromConfig }, { HTTPFacilitatorClient }, { ExactEvmScheme }, { declareDiscoveryExtension }] = await Promise.all([
 		import('@x402/fastify'),
 		import('@x402/core/server'),
-		import('@x402/evm/exact/server')
+		import('@x402/evm/exact/server'),
+		// Bazaar discovery: lets the facilitator we already use
+		// (openx402) catalogue our paid routes in its public
+		// `/discovery/resources` index once each route has settled at
+		// least one payment. Loaded lazily with the rest of the x402
+		// stack so the API still boots clean when the paywall is off.
+		import('@x402/extensions/bazaar')
 	]);
 	const facilitatorClient = new HTTPFacilitatorClient({ url: x402Cfg.facilitatorUrl });
 	const schemes = [{ network: x402Cfg.network, server: new ExactEvmScheme() }];
+	// Decorate each route with a bazaar discovery extension. Additive
+	// metadata only — @x402/fastify detects `extensions.bazaar`, enriches
+	// the HTTP method at request time, and the facilitator soft-drops
+	// anything malformed, so this can't break verification/settlement.
+	const routesWithDiscovery = {};
+	for (const [key, routeCfg] of Object.entries(x402Cfg.routes)) {
+		routesWithDiscovery[key] = {
+			...routeCfg,
+			extensions: {
+				...(routeCfg.extensions ?? {}),
+				...declareDiscoveryExtension(discoveryConfigForRouteKey(key))
+			}
+		};
+	}
 	// `syncFacilitatorOnStart: true` is required — it fetches the
 	// /supported manifest from the facilitator so the resource server
 	// knows which (scheme, network) tuples it can issue
@@ -241,7 +280,7 @@ export async function registerX402(app, x402Cfg) {
 	// exact on eip155:8453".
 	paymentMiddlewareFromConfig(
 		app,
-		x402Cfg.routes,
+		routesWithDiscovery,
 		facilitatorClient,
 		schemes,
 		/* paywallConfig */ undefined,

@@ -533,6 +533,14 @@ describe('paywall surface (x402 enabled, in-process)', () => {
 		expect(body.service.name).toMatch(/Seneschal/);
 		expect(body.service.homepage).toBe('https://seneschal.space');
 		expect(body.service.api_root).toBe('https://api.seneschal.space');
+		// Discovery surface advertises the control panel + Telegram
+		// contact (operator no longer monitors Discord) and lists the
+		// flagship Private Watch product first.
+		expect(body.service.control_panel).toBe('https://panel.seneschal.space');
+		expect(body.service.contact).toBe('https://t.me/OrknetP');
+		expect(Array.isArray(body.service.products)).toBe(true);
+		expect(body.service.products[0].name).toBe('Private Watch');
+		expect(body.service.products[0].start).toBe('POST /v1/private/watch');
 		expect(body.routes.length).toBe(1);
 	});
 

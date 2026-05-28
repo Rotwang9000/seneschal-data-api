@@ -4,7 +4,9 @@
 // REST integration tests.
 
 import { describe, test, expect } from '@jest/globals';
-import { buildX402Config, describePaywall, PREMIUM_ROUTES } from '../src/x402.js';
+import { buildX402Config, describePaywall, discoveryConfigForRouteKey, PREMIUM_ROUTES } from '../src/x402.js';
+import { declareDiscoveryExtension, validateDiscoveryExtension } from '@x402/extensions/bazaar';
+import { checkIfBazaarNeeded } from '@x402/core/server';
 
 const PAY_TO = '0x1234567890abcdef1234567890abcdef12345678';
 
@@ -133,5 +135,49 @@ describe('describePaywall', () => {
 		expect(route.price).toBe('$0.05');
 		expect(route.mime_type).toBe('application/json');
 		expect(typeof route.description).toBe('string');
+	});
+});
+
+describe('discoveryConfigForRouteKey (bazaar discovery wiring)', () => {
+	test('query (GET/HEAD/DELETE) routes get an empty config', () => {
+		expect(discoveryConfigForRouteKey('GET /v1/q/xmr/height')).toEqual({});
+		expect(discoveryConfigForRouteKey('GET /v1/premium/opportunities')).toEqual({});
+	});
+
+	test('body methods (POST/PUT/PATCH) declare bodyType json', () => {
+		expect(discoveryConfigForRouteKey('POST /v1/private/watch')).toEqual({ bodyType: 'json' });
+		expect(discoveryConfigForRouteKey('PUT /x')).toEqual({ bodyType: 'json' });
+		expect(discoveryConfigForRouteKey('PATCH /x')).toEqual({ bodyType: 'json' });
+	});
+
+	test('is tolerant of extra whitespace and case in the route key', () => {
+		expect(discoveryConfigForRouteKey('post   /v1/private/topup')).toEqual({ bodyType: 'json' });
+		expect(discoveryConfigForRouteKey('  get /v1/q/zec/height ')).toEqual({});
+	});
+
+	// The decoration logic mirrors registerX402: produce a bazaar
+	// extension per route from the pure config. We assert the result is
+	// shaped such that (a) the middleware will detect it and (b) it
+	// validates once the HTTP method is enriched at settlement time —
+	// exactly what bazaarResourceServerExtension does on the live path.
+	test('every PREMIUM_ROUTES key yields a bazaar extension the middleware will catalogue', () => {
+		const cfg = buildX402Config({ cfg: baseCfg(), env: {} });
+		const routesWithDiscovery = {};
+		for (const [key, routeCfg] of Object.entries(cfg.routes)) {
+			routesWithDiscovery[key] = {
+				...routeCfg,
+				extensions: { ...declareDiscoveryExtension(discoveryConfigForRouteKey(key)) }
+			};
+		}
+		expect(checkIfBazaarNeeded(routesWithDiscovery)).toBe(true);
+
+		for (const [key, routeCfg] of Object.entries(routesWithDiscovery)) {
+			const bazaar = routeCfg.extensions.bazaar;
+			expect(bazaar).toBeDefined();
+			// Enrich the method the way the runtime server extension does,
+			// then it must pass the facilitator's schema validation.
+			bazaar.info.input.method = key.split(' ', 1)[0];
+			expect(validateDiscoveryExtension(bazaar)).toEqual({ valid: true });
+		}
 	});
 });

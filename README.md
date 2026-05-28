@@ -3,10 +3,24 @@
 [![ci](https://github.com/Rotwang9000/seneschal-data-api/actions/workflows/ci.yml/badge.svg)](https://github.com/Rotwang9000/seneschal-data-api/actions/workflows/ci.yml)
 [![license](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
-Free, public, read-only REST + [Model Context Protocol](https://modelcontextprotocol.io)
+Free, public REST + [Model Context Protocol](https://modelcontextprotocol.io)
 server exposing real-time and historical DeFi liquidation telemetry for
 Aave, Morpho, Spark and Compound on Ethereum mainnet, plus block-builder
 market share data from the operator's own slot-by-slot shadow recorder.
+
+Two paid tiers sit on top, both billed per call over
+[x402](https://docs.x402.org) micropayments (USDC on Base — no account, no
+API key):
+
+- **Private Watch** *(flagship)* — give us a Monero or Zcash **view key**
+  and a webhook URL; we watch the chain on our own full nodes and POST you
+  an HMAC-signed event for every inbound payment. Credit-metered
+  ($0.02/day + $0.005/call), so small receivers pay pennies and you never
+  run a node. Drive it from the API, the MCP tools, or the
+  [WalletConnect control panel](https://panel.seneschal.space).
+- **Premium data** — expected-value-ranked liquidation opportunities,
+  per-builder bid distributions, and Penny Oracle atomic single-fact
+  endpoints (DeFi + Monero/Zcash) from $0.001/call.
 
 ## Live endpoints
 
@@ -14,6 +28,7 @@ market share data from the operator's own slot-by-slot shadow recorder.
 |-------------------------------|----------------------------------|----------|
 | REST API                      | `https://api.seneschal.space`    | None     |
 | MCP (Streamable HTTP)         | `https://mcp.seneschal.space`    | None     |
+| Control panel (Private Watch) | `https://panel.seneschal.space`  | Wallet   |
 | Docs                          | `https://docs.seneschal.space`   | -        |
 | Live stats dashboard          | `https://stats.seneschal.space`  | -        |
 
@@ -42,7 +57,13 @@ Add this to your MCP client config (e.g. `~/.cursor/mcp.json`):
 }
 ```
 
-Nine tools become available to your agent:
+This server is published to the official
+[MCP Registry](https://registry.modelcontextprotocol.io) as
+`io.github.rotwang9000/seneschal-data` (see [`server.json`](server.json)),
+so MCP-aware clients and aggregators can discover it automatically.
+
+Eighteen tools become available to your agent — free read tools, plus
+paid tools that hand back the exact URL + body to settle over x402:
 
 | Tool                                 | Purpose                                                              |
 |--------------------------------------|----------------------------------------------------------------------|
@@ -55,6 +76,15 @@ Nine tools become available to your agent:
 | `seneschal_builder_leaderboard`      | Ethereum builder market share (24h, 7d, 30d, all-time)               |
 | `seneschal_stats_overview`           | Aggregate snapshot powering the public dashboard, incl. operator activity (counts only — no profit fields) |
 | `seneschal_flashloan_providers`      | Curated catalogue of mainnet flash-loan providers, incl. LP-side commit-capital paths where applicable     |
+| `seneschal_paywall_info`             | Free metadata for the x402 paywall (network, recipient, per-call price)                                    |
+| `seneschal_premium_opportunities`    | EV-ranked at-risk borrowers with realised market intel *(x402, paid)*                                      |
+| `seneschal_premium_builder_stats`    | Per-builder bid distribution + hourly slot histogram for bundle pricing *(x402, paid)*                     |
+| `seneschal_q`                        | Penny Oracle dispatcher — atomic single facts across DeFi + Monero/Zcash, $0.001/call *(x402, paid)*       |
+| `seneschal_private_watch_info`       | Free metadata for Private Watch: meter, supported chains, NFPT upstream health, security notes             |
+| `seneschal_private_watch_create`     | Subscribe an XMR/ZEC view key to webhook payment monitoring *(x402, paid)*                                 |
+| `seneschal_private_watch_topup`      | URL + body to top up an existing watch's credit ($0.10 / $1 / $5 tiers)                                    |
+| `seneschal_private_watch_historical` | One-off paid scan returning spendable + spent notes for a view key *(x402, paid; key never persists)*      |
+| `seneschal_private_watch_derive_viewkey` | Free, rate-limited Zcash UFVK derivation from a BIP-39 mnemonic (with a loud security warning)         |
 
 ## REST endpoints
 
@@ -123,11 +153,13 @@ producing the same shapes you can point this server at it.
 npm test
 ```
 
-75 jest tests covering the query layer (in-memory SQLite fixtures), the
-Fastify REST routes (via `fastify.inject`), and the MCP server (both
+539 jest tests covering the query layer (in-memory SQLite fixtures), the
+Fastify REST routes (via `fastify.inject`), the MCP server (both
 in-process via `InMemoryTransport` and end-to-end via
-`StreamableHTTPClientTransport`). Plus `test/live-smoke.mjs` which
-exercises the live `mcp.seneschal.space` endpoint over Streamable HTTP.
+`StreamableHTTPClientTransport`), the x402 paywall + bazaar-discovery
+wiring, the Private Watch credit meter / poller / surge pricing, and the
+ops watchdog. Plus `test/live-smoke.mjs` which exercises the live
+`mcp.seneschal.space` endpoint over Streamable HTTP.
 
 ## Architecture
 
@@ -190,6 +222,7 @@ budget a session before opening a paid request.
 - **Direct tips**: ETH / BTC addresses are surfaced on
   [stats.seneschal.space](https://stats.seneschal.space) once the
   operator sets `SENESCHAL_DONATE_ETH` / `SENESCHAL_DONATE_BTC`.
+- **Questions / allow-list bumps**: Telegram [`@OrknetP`](https://t.me/OrknetP).
 
 Seneschal runs on a single Helsinki box; every cent helps keep it
 online.
@@ -202,5 +235,5 @@ MIT &mdash; see [LICENSE](LICENSE).
 
 Seneschal is a single-operator Ethereum block builder and searcher
 running an `rbuilder` fork from a co-located server in Helsinki.
-Builder on-chain extra_data is `Seneschal/0.1`. Contact `@Rotwang9000`
-on Discord.
+Builder on-chain extra_data is `Seneschal/0.1`. Contact
+[`@OrknetP`](https://t.me/OrknetP) on Telegram (checked periodically).
