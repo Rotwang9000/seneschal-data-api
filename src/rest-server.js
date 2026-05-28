@@ -1100,7 +1100,7 @@ export async function buildApp(options = {}) {
 			...paywallSummary,
 			service: {
 				name: 'Seneschal Data API',
-				description: 'On-chain DeFi liquidation + Ethereum builder telemetry and Monero/Zcash payment-watching, payable per call over x402. Free read tier, no API key.',
+				description: 'Monero & Zcash payment webhooks (HMAC-signed, view-key only, no node) plus on-chain DeFi liquidation and Ethereum builder telemetry — all payable per call over x402 on Base. Free read tier, no API key, no account.',
 				homepage: 'https://seneschal.space',
 				docs: 'https://docs.seneschal.space',
 				api_root: 'https://api.seneschal.space',

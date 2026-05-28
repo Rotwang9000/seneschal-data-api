@@ -117,7 +117,7 @@ export function buildMcpServer(options = {}) {
 		name: 'seneschal-data',
 		version: apiVersion,
 		title: 'Seneschal Data',
-		description: 'Free, public liquidation + builder telemetry for DeFi (Aave, Morpho, Spark, Compound). No authentication; rate-limited at the Caddy layer. Premium feed (per-call x402 micropayment in USDC on Base) exposes the uncapped at-risk catalogue plus realised market intel.'
+		description: 'Pay-per-call data tools over x402 (USDC on Base, no API key): Monero/Zcash payment-watching — create view-key webhooks, run historical note scans, derive a Zcash UFVK — plus live XMR/ZEC chain facts, DeFi liquidation telemetry (Aave, Morpho, Spark, Compound at-risk borrowers) and Ethereum builder bid-distribution stats. Free read tier; Private Watch and premium feeds settle via x402 micropayments.'
 	});
 
 	server.registerTool('seneschal_health', {
