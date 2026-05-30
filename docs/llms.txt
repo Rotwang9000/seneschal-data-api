@@ -1,0 +1,32 @@
+# Seneschal
+
+> View-key payment webhooks for Monero and Zcash, plus an Ethereum mainnet block builder and free DeFi-liquidation telemetry. Pay-per-call in USDC via the x402 standard; free read tier; an MCP server for AI agents (no API key).
+
+Seneschal lets a receiver get an HMAC-signed webhook the instant a Monero (XMR) or Zcash (ZEC) payment lands at their address, using only a read-only *view key* — no node to run, no custody (view keys cannot spend). Premium endpoints are paid per call in USDC on Base via the x402 protocol; many read endpoints are free.
+
+## Private Watch — Monero / Zcash payment webhooks (headline product)
+- Docs & quickstart: https://docs.seneschal.space/
+- Create a watch: POST https://api.seneschal.space/v1/private/watch (x402, $0.10 seeds credit) — body { chain, address, viewKey, webhookUrl }. Returns a webhookSecret; verify deliveries with HMAC-SHA256.
+- Top up credit: POST https://api.seneschal.space/v1/private/topup | /topup-1 | /topup-5
+- One-off historical scan: POST https://api.seneschal.space/v1/private/historical (x402)
+- Free UFVK derivation from a seed phrase (rate-limited): POST https://api.seneschal.space/v1/private/derive-viewkey
+
+## API discovery
+- x402 payment manifest: https://api.seneschal.space/.well-known/x402
+- Health + table sizes: https://api.seneschal.space/v1/health
+- MCP server (Streamable HTTP transport): https://mcp.seneschal.space/
+- Live stats dashboard: https://stats.seneschal.space/
+- WalletConnect control panel: https://panel.seneschal.space/
+
+## Pricing
+- Private Watch: $0.02 per idle day + $0.005 per webhook delivered; creation seeds $0.10 credit; top-ups of $0.10 / $1 / $5.
+- Atomic "single-fact" endpoints (Monero/Zcash chain facts; DeFi facts): about $0.001 each, ideal for agent loops.
+
+## Free / public (no key)
+- DeFi liquidation telemetry for Aave, Morpho, Spark and Compound on Ethereum mainnet.
+- Ethereum block-builder market-share data from the Seneschal shadow recorder.
+
+## Contact & policies
+- Telegram: https://t.me/OrknetP
+- Terms: https://seneschal.space/terms.html
+- Privacy: https://seneschal.space/privacy.html

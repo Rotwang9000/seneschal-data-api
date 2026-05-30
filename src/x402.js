@@ -29,73 +29,35 @@ const ADDRESS_RE = /^0x[0-9a-fA-F]{40}$/u;
 // on eip155:8453 (Base) is supported.
 export const CDP_FACILITATOR_URL = 'https://api.cdp.coinbase.com/platform/v2/x402';
 
+// Atomic single-fact ("Penny Oracle") routes all share the micro
+// price tier (`X402_Q_PRICE`, default $0.001) so agents can hammer
+// them in tight loops without subscription friction. Factored into a
+// helper so the privacy-chain and DeFi fact tables below stay
+// declarative and DRY. @x402/fastify matches `"METHOD /path"` exactly
+// (no wildcards), so each path is enumerated explicitly.
+const qFact = (path, description) => Object.freeze({
+	method: 'GET',
+	path,
+	description,
+	mimeType: 'application/json',
+	priceEnvKey: 'X402_Q_PRICE'
+});
+
 // Premium endpoints we'll wire up. Keep this in one place so the
 // systemd unit, the README, and the MCP tool descriptions all stay in
-// sync — touch one constant, the rest follow.
+// sync — touch one constant, the rest follow. Order is lead-product
+// first: the Monero/Zcash view-key payment webhooks (Private Watch)
+// and privacy-chain facts head the list because that's the
+// differentiated offering — so the discovery doc, MCP surface and
+// paywall description all present it first — with the DeFi-liquidation
+// and Ethereum-builder feeds after.
 export const PREMIUM_ROUTES = Object.freeze([
-	Object.freeze({
-		method: 'GET',
-		path: '/v1/premium/opportunities',
-		// Single source of truth for what the route returns and how
-		// much it costs. The dashboard / docs / MCP tool can all
-		// derive their copy from here.
-		description: 'Top at-risk borrowers across Aave + Morpho + Spark with realised market success-rate, average actual profit-USD, and the builder most likely to land each market. Sorted by expected EV. Pure SQL, no live RPC.',
-		mimeType: 'application/json',
-		priceEnvKey: 'X402_FEED_PRICE'
-	}),
-	Object.freeze({
-		method: 'GET',
-		path: '/v1/premium/builder-stats',
-		// Per-builder bid distribution (median/p90/p99/max) + hourly
-		// slot activity histogram. Sourced from the Seneschal shadow
-		// recorder so it covers every observed slot, not just landed
-		// blocks. Tells searchers what value they need to outbid each
-		// builder, segmented by hour of day. Useful for tuning bundle
-		// bid pricing.
-		description: 'Per-builder bid distribution (p25/median/p75/p90/p99/max) and hourly slot activity histogram from the Seneschal shadow recorder. Answers "what bid value do I need to land in builder X right now?" for searchers tuning bundle pricing.',
-		mimeType: 'application/json',
-		priceEnvKey: 'X402_BUILDER_STATS_PRICE'
-	}),
-	// Penny Oracle — atomic single-fact endpoints. Each priced at the
-	// same micro tier (`X402_Q_PRICE`, default $0.001) so agents can
-	// hammer them in tight loops without subscription friction. The
-	// path family is enumerated explicitly because @x402/fastify
-	// matches `"METHOD /path"` exactly, no wildcards.
-	...[
-		{ p: '/v1/q/liquidatable',         d: 'Single-fact: is borrower X currently liquidatable? Returns {found, liquidatable, hf, debt_usd, last_seen_ms} sourced from Aave + Morpho snapshots.' },
-		{ p: '/v1/q/at-risk-count',        d: 'Single-fact: how many borrowers have HF < max_hf and debt >= min_debt_usd right now? Returns {count, total_debt_usd}.' },
-		{ p: '/v1/q/recent-liquidations',  d: 'Single-fact: how many on-chain liquidations have we observed in the last `since_min` minutes, with what aggregate debt? Returns {count, total_debt_usd}.' },
-		{ p: '/v1/q/top-builder',          d: 'Single-fact: which builder has the largest slot share in the named window (24h|7d|30d)? Returns {builder, share_pct, slots_won}.' },
-		{ p: '/v1/q/builder-share',        d: 'Single-fact: what share of slots in the window did `builder` win? Substring match.' },
-		{ p: '/v1/q/builder-bid',          d: 'Single-fact: percentile bid value (in ETH) for `builder` over the window. Returns {value_eth, samples}.' },
-		{ p: '/v1/q/cheapest-flashloan',   d: 'Single-fact: cheapest flash-loan provider for `asset` on `chain` (default ethereum). Returns {provider, fee_bps, address}.' },
-		{ p: '/v1/q/data-freshness',       d: 'Single-fact: age in seconds of the freshest record in the named source (shadow_blocks|borrower_snapshot|morpho_borrower_snapshot|missed_liquidations|executions).' },
-		// Privacy-chain atomic facts. Sourced from our co-located
-		// monerod + zebra full nodes; the equivalent thing you'd
-		// otherwise need to run yourself (~108 GB Monero, ~270 GB
-		// Zcash). Cached 10 s server-side so a hot agent loop
-		// costs the daemon zero extra work.
-		{ p: '/v1/q/xmr/height',           d: 'Single-fact: current Monero chain height + sync status. Sourced from a live Seneschal-operated monerod node.' },
-		{ p: '/v1/q/xmr/mempool',          d: 'Single-fact: number of pending transactions in the Monero mempool right now.' },
-		{ p: '/v1/q/xmr/fee',              d: 'Single-fact: recommended Monero per-byte fee in piconero (also exposed per-kB for convenience).' },
-		{ p: '/v1/q/xmr/last-block',       d: 'Single-fact: timestamp + age of the most recent Monero block, plus hash, difficulty, and size.' },
-		{ p: '/v1/q/zec/height',           d: 'Single-fact: current Zcash chain height + verification progress + best block hash. Sourced from a live Seneschal-operated zebra node.' },
-		{ p: '/v1/q/zec/mempool',          d: 'Single-fact: Zcash mempool count + bytes.' },
-		{ p: '/v1/q/zec/last-block',       d: 'Single-fact: timestamp + age of the most recent Zcash block, plus hash, difficulty, and size.' }
-	].map(r => Object.freeze({
-		method: 'GET',
-		path: r.p,
-		description: r.d,
-		mimeType: 'application/json',
-		priceEnvKey: 'X402_Q_PRICE'
-	})),
-	// Private watch — paywalled creation + credit top-up + historical
-	// lookup. The watch itself runs on a credit meter (per-day +
-	// per-call rates set in private-watch.js); each route below
-	// settles the x402 fee then either creates a row or applies a
-	// credit increment to an existing row. Routes are explicit per
-	// price tier because @x402/fastify matches "METHOD /path"
-	// exactly — no path params, no query-based pricing.
+	// === Private Watch — Monero/Zcash view-key payment webhooks ===
+	// The lead product: a paid create, credit-meter top-ups, and a
+	// one-off historical scan. The watch runs on a credit meter
+	// (per-day + per-call rates set in private-watch.js); each route
+	// settles the x402 fee then creates a row or applies a credit
+	// increment. Explicit per price tier (no path params).
 	Object.freeze({
 		method: 'POST',
 		path: '/v1/private/watch',
@@ -130,10 +92,48 @@ export const PREMIUM_ROUTES = Object.freeze([
 		description: 'One-off historical scan of a Zcash UFVK or Monero address+viewKey. Returns spendable + spent note totals and (optional) per-note breakdown. The view key streams to NFPT in-memory only — nothing is persisted to our DB. Body: { chain, address, viewKey, birthdayHeight?, toHeight?, includeNotes? }.',
 		mimeType: 'application/json',
 		priceEnvKey: 'X402_PRIVATE_HISTORICAL_PRICE'
-	})
+	}),
 	// POST /v1/private/derive-viewkey is intentionally FREE — it's
 	// rate-limited per-IP at the handler level. Excluded from
 	// PREMIUM_ROUTES so x402 doesn't try to gate it.
+
+	// === Privacy-chain atomic facts (Monero/Zcash) ===
+	// Sourced from our co-located monerod + zebra full nodes; the
+	// equivalent thing you'd otherwise need to run yourself (~108 GB
+	// Monero, ~270 GB Zcash). Cached 10 s server-side so a hot agent
+	// loop costs the daemon zero extra work.
+	qFact('/v1/q/xmr/height',     'Single-fact: current Monero chain height + sync status. Sourced from a live Seneschal-operated monerod node.'),
+	qFact('/v1/q/xmr/mempool',    'Single-fact: number of pending transactions in the Monero mempool right now.'),
+	qFact('/v1/q/xmr/fee',        'Single-fact: recommended Monero per-byte fee in piconero (also exposed per-kB for convenience).'),
+	qFact('/v1/q/xmr/last-block', 'Single-fact: timestamp + age of the most recent Monero block, plus hash, difficulty, and size.'),
+	qFact('/v1/q/zec/height',     'Single-fact: current Zcash chain height + verification progress + best block hash. Sourced from a live Seneschal-operated zebra node.'),
+	qFact('/v1/q/zec/mempool',    'Single-fact: Zcash mempool count + bytes.'),
+	qFact('/v1/q/zec/last-block', 'Single-fact: timestamp + age of the most recent Zcash block, plus hash, difficulty, and size.'),
+
+	// === DeFi liquidation + Ethereum builder feeds ===
+	Object.freeze({
+		method: 'GET',
+		path: '/v1/premium/opportunities',
+		description: 'Top at-risk borrowers across Aave + Morpho + Spark with realised market success-rate, average actual profit-USD, and the builder most likely to land each market. Sorted by expected EV. Pure SQL, no live RPC.',
+		mimeType: 'application/json',
+		priceEnvKey: 'X402_FEED_PRICE'
+	}),
+	Object.freeze({
+		method: 'GET',
+		path: '/v1/premium/builder-stats',
+		description: 'Per-builder bid distribution (p25/median/p75/p90/p99/max) and hourly slot activity histogram from the Seneschal shadow recorder. Answers "what bid value do I need to land in builder X right now?" for searchers tuning bundle pricing.',
+		mimeType: 'application/json',
+		priceEnvKey: 'X402_BUILDER_STATS_PRICE'
+	}),
+	// === DeFi / builder atomic facts ===
+	qFact('/v1/q/liquidatable',        'Single-fact: is borrower X currently liquidatable? Returns {found, liquidatable, hf, debt_usd, last_seen_ms} sourced from Aave + Morpho snapshots.'),
+	qFact('/v1/q/at-risk-count',       'Single-fact: how many borrowers have HF < max_hf and debt >= min_debt_usd right now? Returns {count, total_debt_usd}.'),
+	qFact('/v1/q/recent-liquidations', 'Single-fact: how many on-chain liquidations have we observed in the last `since_min` minutes, with what aggregate debt? Returns {count, total_debt_usd}.'),
+	qFact('/v1/q/top-builder',         'Single-fact: which builder has the largest slot share in the named window (24h|7d|30d)? Returns {builder, share_pct, slots_won}.'),
+	qFact('/v1/q/builder-share',       'Single-fact: what share of slots in the window did `builder` win? Substring match.'),
+	qFact('/v1/q/builder-bid',         'Single-fact: percentile bid value (in ETH) for `builder` over the window. Returns {value_eth, samples}.'),
+	qFact('/v1/q/cheapest-flashloan',  'Single-fact: cheapest flash-loan provider for `asset` on `chain` (default ethereum). Returns {provider, fee_bps, address}.'),
+	qFact('/v1/q/data-freshness',      'Single-fact: age in seconds of the freshest record in the named source (shadow_blocks|borrower_snapshot|morpho_borrower_snapshot|missed_liquidations|executions).')
 ]);
 
 /**

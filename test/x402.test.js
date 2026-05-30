@@ -71,7 +71,8 @@ describe('buildX402Config', () => {
 		expect(cfg.facilitatorUrl).toBe('https://x402.org/facilitator');
 		const routeKeys = Object.keys(cfg.routes);
 		expect(routeKeys.length).toBe(PREMIUM_ROUTES.length);
-		expect(routeKeys[0]).toBe('GET /v1/premium/opportunities');
+		// Lead route is the Private Watch product (privacy-coin first).
+		expect(routeKeys[0]).toBe('POST /v1/private/watch');
 		const r = cfg.routes['GET /v1/premium/opportunities'];
 		expect(r.accepts.scheme).toBe('exact');
 		expect(r.accepts.payTo).toBe(PAY_TO);
@@ -165,7 +166,8 @@ describe('describePaywall', () => {
 		expect(desc.scheme).toMatch(/EIP-3009/);
 		expect(desc.routes.length).toBe(PREMIUM_ROUTES.length);
 		const route = desc.routes[0];
-		expect(route.endpoint).toBe('GET /v1/premium/opportunities');
+		// Privacy-coin lead route heads the agent-facing discovery doc.
+		expect(route.endpoint).toBe('POST /v1/private/watch');
 		expect(route.price).toBe('$0.05');
 		expect(route.mime_type).toBe('application/json');
 		expect(typeof route.description).toBe('string');

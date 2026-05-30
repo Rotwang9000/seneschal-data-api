@@ -33,6 +33,13 @@ MAPPINGS=(
 	"panel.html:panel/index.html"
 	"privacy.html:privacy.html"
 	"terms.html:terms.html"
+	# Crawlability / AI-agent discovery — served at the apex domain, with
+	# llms.txt + robots.txt also mirrored under the docs subdomain root.
+	"llms.txt:llms.txt"
+	"llms.txt:docs/llms.txt"
+	"robots.txt:robots.txt"
+	"robots.txt:docs/robots.txt"
+	"sitemap.xml:sitemap.xml"
 )
 
 echo "Publishing docs from ${REMOTE}:${SRC}/docs to ${REMOTE}:${WEB_ROOT}"

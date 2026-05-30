@@ -3,8 +3,29 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Seneschal Data API</title>
-<meta name="description" content="Free public REST and MCP API exposing real-time and historical liquidation telemetry for Aave, Morpho, Spark and Compound on Ethereum mainnet.">
+<title>Seneschal — Monero &amp; Zcash payment webhooks (view-key, no node)</title>
+<meta name="description" content="Get an HMAC-signed webhook the moment a Monero or Zcash payment lands at your address — using only a read-only view key, no node to run. Pay-per-call in USDC via x402; free read tier, no signup. Plus an Ethereum block builder and free DeFi liquidation telemetry.">
+<link rel="canonical" href="https://docs.seneschal.space/">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="Seneschal">
+<meta property="og:url" content="https://docs.seneschal.space/">
+<meta property="og:title" content="Monero &amp; Zcash payment webhooks — view-key only, no node">
+<meta property="og:description" content="A webhook the instant an XMR or ZEC payment lands at your address, from a read-only view key. Pay-per-call in USDC (x402); free read tier, no signup or API key.">
+<meta name="twitter:card" content="summary">
+<meta name="twitter:title" content="Monero &amp; Zcash payment webhooks — view-key only, no node">
+<meta name="twitter:description" content="A webhook the instant an XMR or ZEC payment lands at your address, from a read-only view key. Pay-per-call in USDC (x402); free read tier.">
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "WebAPI",
+  "name": "Seneschal Data API",
+  "description": "View-key payment webhooks for Monero and Zcash, plus Ethereum builder and DeFi liquidation data. Pay-per-call via x402 USDC on Base; free read tier; MCP server for AI agents.",
+  "documentation": "https://docs.seneschal.space/",
+  "provider": { "@type": "Organization", "name": "Seneschal", "url": "https://seneschal.space" },
+  "termsOfService": "https://seneschal.space/terms.html",
+  "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD", "description": "Free read tier; premium endpoints pay-per-call in USDC via x402." }
+}
+</script>
 <style>
 :root {
 	--fg: #1a1a1a;
@@ -57,10 +78,11 @@ footer { text-align: center; margin-top: 4em; padding-top: 2em; border-top: 1px 
 
 <h1>Seneschal Data API</h1>
 <p class="muted">
-Free, public, read-only HTTP and Model Context Protocol API exposing
-real-time and historical DeFi liquidation telemetry for Aave, Morpho,
-Spark and Compound on Ethereum mainnet, plus block-builder market share
-data from our own shadow recorder.
+Pay-per-call data over HTTP and the Model Context Protocol. The headline
+product is <strong>Private Watch</strong> &mdash; view-key payment webhooks for
+Monero &amp; Zcash (below). Also free and public: DeFi-liquidation telemetry
+(Aave, Morpho, Spark, Compound) and Ethereum block-builder market share from
+our own shadow recorder. No signup, no API key.
 </p>
 
 <div class="callout callout-info">
