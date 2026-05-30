@@ -42,6 +42,9 @@ MAPPINGS=(
 	"sitemap.xml:sitemap.xml"
 	"og.png:og.png"
 	"og.png:docs/og.png"
+	# Brand assets, downloadable over HTTPS (operator works over SSH, no local copy).
+	"seneschal-avatar.png:brand/seneschal-avatar.png"
+	"seneschal-banner.png:brand/seneschal-banner.png"
 )
 
 echo "Publishing docs from ${REMOTE}:${SRC}/docs to ${REMOTE}:${WEB_ROOT}"
