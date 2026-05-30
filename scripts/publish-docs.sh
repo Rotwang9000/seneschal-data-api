@@ -40,6 +40,8 @@ MAPPINGS=(
 	"robots.txt:robots.txt"
 	"robots.txt:docs/robots.txt"
 	"sitemap.xml:sitemap.xml"
+	"og.png:og.png"
+	"og.png:docs/og.png"
 )
 
 echo "Publishing docs from ${REMOTE}:${SRC}/docs to ${REMOTE}:${WEB_ROOT}"
