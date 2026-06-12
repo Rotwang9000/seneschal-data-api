@@ -33,6 +33,7 @@ import {
 import { filterProviders, FLASHLOAN_PROVIDERS } from './flashloan-providers.js';
 import { getPremiumOpportunities, getPremiumBuilderStats } from './queries-premium.js';
 import { buildX402Config, registerX402, describePaywall } from './x402.js';
+import { buildOpenApiDocument } from './openapi.js';
 import { buildIncomeConfig, createIncomeCache } from './income.js';
 import { readIncomeHistory, bucketSeriesDaily } from './income-history.js';
 import {
@@ -597,6 +598,38 @@ export async function buildApp(options = {}) {
 	// introspect price + rails without making a paid call first.
 	app.get('/v1/paywall', async () => {
 		return paywallSummary ?? { enabled: false, reason: 'X402_RECIPIENT_ADDRESS not set' };
+	});
+
+	// `/openapi.json` — canonical machine-readable contract. x402
+	// indexers (x402scan and friends) require this document and verify
+	// its x-payment-info prices against live 402 challenges, so it is
+	// derived from the SAME x402Cfg the paywall runs on. Built once at
+	// startup: the catalogue and prices are fixed for the process
+	// lifetime.
+	const openApiDoc = buildOpenApiDocument({ x402Cfg });
+	app.get('/openapi.json', async () => openApiDoc);
+
+	// `/favicon.ico` — x402scan (and browsers hitting the API root)
+	// look for an icon at the origin; the listing shows a blank tile
+	// without one. Loaded lazily + cached so a missing file in dev
+	// degrades to a plain 404 rather than a startup failure.
+	let faviconCache;
+	app.get('/favicon.ico', async (req, reply) => {
+		if (faviconCache === undefined) {
+			try {
+				faviconCache = await readFile(new URL('../docs/favicon.ico', import.meta.url));
+			}
+			catch {
+				faviconCache = null;
+			}
+		}
+		if (!faviconCache) {
+			reply.code(404);
+			return { error: { code: 'not_found', message: 'no favicon' } };
+		}
+		reply.header('content-type', 'image/x-icon');
+		reply.header('cache-control', 'public, max-age=86400');
+		return reply.send(faviconCache);
 	});
 
 	// `/.well-known/x402` — opt-in discovery manifest matching the

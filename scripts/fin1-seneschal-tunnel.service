@@ -1,0 +1,51 @@
+# Reverse SSH tunnel: fin1 -> fin4, exposing fin1's loopback-bound
+# services on fin4's loopback. The Seneschal data-api on fin4 depends
+# on these three forwards:
+#
+#   fin4 127.0.0.1:18081 -> fin1 monerod RPC
+#   fin4 127.0.0.1:8232  -> fin1 zebra (Zcash) RPC
+#   fin4 127.0.0.1:3555  -> fin1 NFPT scanner API
+#
+# INSTALL (on fin1, which we cannot reach from the dev box — fin1 only
+# connects outward to fin4):
+#
+#   1. Copy this file to /etc/systemd/system/seneschal-tunnel.service
+#   2. Confirm root@fin1 already has a key authorised on fin4 (it does —
+#      the tunnel runs today as root with an ED25519 key).
+#   3. If the current hand-started tunnel is running, kill it first so
+#      the listen ports are free (`pgrep -af "ssh.*18081"` on fin1).
+#   4. systemctl daemon-reload && systemctl enable --now seneschal-tunnel
+#
+# Why plain ssh + systemd Restart instead of autossh: systemd already
+# does supervised restart with backoff, and ServerAliveInterval makes
+# ssh itself exit when the link goes quiet — autossh would only add a
+# second supervisor doing the same job.
+#
+# ExitOnForwardFailure=yes makes ssh fail fast if fin4 still has a
+# stale listener on any port (e.g. an old tunnel session that hasn't
+# timed out) instead of starting half-connected; systemd then retries
+# until the stale socket clears.
+
+[Unit]
+Description=Seneschal reverse tunnel to fin4 (monerod/zebra/NFPT forwards)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=exec
+ExecStart=/usr/bin/ssh -NT \
+	-o ExitOnForwardFailure=yes \
+	-o ServerAliveInterval=30 \
+	-o ServerAliveCountMax=3 \
+	-o ConnectTimeout=15 \
+	-o BatchMode=yes \
+	-o StrictHostKeyChecking=accept-new \
+	-R 127.0.0.1:18081:127.0.0.1:18081 \
+	-R 127.0.0.1:8232:127.0.0.1:8232 \
+	-R 127.0.0.1:3555:127.0.0.1:3555 \
+	root@65.108.233.209
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

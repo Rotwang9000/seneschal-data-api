@@ -64,10 +64,17 @@ const PENNY_TARGETS = [
 	{ method: 'GET', path: '/v1/q/zec/height' },
 	{ method: 'GET', path: '/v1/q/zec/mempool' },
 	{ method: 'GET', path: '/v1/q/zec/last-block' },
-	// DeFi facts — parameterless ones (the rest need an addr/builder/asset).
+	// DeFi facts — parameterless ones first, then the parameterised ones
+	// with cheap representative arguments (any valid query works; the
+	// point is the settle, which is what triggers Bazaar indexing).
 	{ method: 'GET', path: '/v1/q/at-risk-count' },
 	{ method: 'GET', path: '/v1/q/recent-liquidations' },
-	{ method: 'GET', path: '/v1/q/top-builder' }
+	{ method: 'GET', path: '/v1/q/top-builder' },
+	{ method: 'GET', path: '/v1/q/liquidatable?addr=0x0000000000000000000000000000000000000001' },
+	{ method: 'GET', path: '/v1/q/builder-share?builder=titan' },
+	{ method: 'GET', path: '/v1/q/builder-bid?builder=titan&pct=50' },
+	{ method: 'GET', path: '/v1/q/cheapest-flashloan?asset=WETH' },
+	{ method: 'GET', path: '/v1/q/data-freshness?source=borrower_snapshot' }
 ];
 
 // Higher-priced premium feeds — only bootstrapped with --all-premium and a

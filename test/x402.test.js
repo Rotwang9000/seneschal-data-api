@@ -217,9 +217,10 @@ describe('discoveryConfigForRouteKey (bazaar discovery wiring)', () => {
 		const cfg = buildX402Config({ cfg: baseCfg(), env: {} });
 		const routesWithDiscovery = {};
 		for (const [key, routeCfg] of Object.entries(cfg.routes)) {
+			const { discovery, ...middlewareCfg } = routeCfg;
 			routesWithDiscovery[key] = {
-				...routeCfg,
-				extensions: { ...declareDiscoveryExtension(discoveryConfigForRouteKey(key)) }
+				...middlewareCfg,
+				extensions: { ...declareDiscoveryExtension(discoveryConfigForRouteKey(key, discovery)) }
 			};
 		}
 		expect(checkIfBazaarNeeded(routesWithDiscovery)).toBe(true);
@@ -232,5 +233,32 @@ describe('discoveryConfigForRouteKey (bazaar discovery wiring)', () => {
 			bazaar.info.input.method = key.split(' ', 1)[0];
 			expect(validateDiscoveryExtension(bazaar)).toEqual({ valid: true });
 		}
+	});
+
+	// Regression for the SCHEMA_OUTPUT_MISSING errors x402scan's
+	// validator raised against every paid route: the catalogue's
+	// discovery schemas + examples must survive the trip through
+	// buildX402Config → declareDiscoveryExtension and land in the
+	// extension payload the facilitator catalogues. Upstream shape:
+	// the example sits at info.output.example and the schema we supply
+	// becomes schema.properties.output.properties.example.
+	test('catalogue discovery schemas land in the declared bazaar extension', () => {
+		const cfg = buildX402Config({ cfg: baseCfg(), env: {} });
+		for (const [key, routeCfg] of Object.entries(cfg.routes)) {
+			const { discovery } = routeCfg;
+			expect(discovery).toBeDefined();
+			const ext = declareDiscoveryExtension(discoveryConfigForRouteKey(key, discovery)).bazaar;
+			// Every paid route must publish an output example…
+			expect(ext.info.output?.example).toBeDefined();
+			// …and the output schema must be folded into the extension schema.
+			expect(ext.schema?.properties?.output?.properties?.example).toBeDefined();
+		}
+		// …and a spot-check that specific declared fields survive.
+		const watch = cfg.routes['POST /v1/private/watch'];
+		const watchExt = declareDiscoveryExtension(discoveryConfigForRouteKey('POST /v1/private/watch', watch.discovery)).bazaar;
+		const exampleSchema = watchExt.schema?.properties?.output?.properties?.example ?? {};
+		expect(exampleSchema.properties?.watchToken).toBeDefined();
+		expect(exampleSchema.properties?.webhookSecret).toBeDefined();
+		expect(watchExt.info.output?.example?.watchId).toBeDefined();
 	});
 });
