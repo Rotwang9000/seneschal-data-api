@@ -197,7 +197,10 @@ async function settle(fetchWithPayment, target) {
 	const startedMs = Date.now();
 	const res = await fetchWithPayment(url, requestInit(target));
 	const elapsedMs = Date.now() - startedMs;
-	const settlement = decodeSettlement(res.headers.get('x-payment-response'));
+	// x402 v2 middleware names the header `payment-response`; older stacks
+	// used `x-payment-response`. Check both so settle reporting (success +
+	// tx hash) survives upgrades on either side.
+	const settlement = decodeSettlement(res.headers.get('payment-response') ?? res.headers.get('x-payment-response'));
 	let bodyPreview = '';
 	let resBody = null;
 	if (res.ok) {

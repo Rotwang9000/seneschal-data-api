@@ -1,51 +1,54 @@
-# Reverse SSH tunnel: fin1 -> fin4, exposing fin1's loopback-bound
-# services on fin4's loopback. The Seneschal data-api on fin4 depends
-# on these three forwards:
+# Persistent reverse tunnel fin1 → fin4 exposing local chain RPCs to the
+# data-api host: monerod (18081), zebra (8232) and NFPT (3555) appear on
+# fin4's 127.0.0.1. The data-api, its pollers and the ops-monitor probes
+# all depend on these forwards.
 #
-#   fin4 127.0.0.1:18081 -> fin1 monerod RPC
-#   fin4 127.0.0.1:8232  -> fin1 zebra (Zcash) RPC
-#   fin4 127.0.0.1:3555  -> fin1 NFPT scanner API
+# Installed on fin1 as /etc/systemd/system/fin1-seneschal-tunnel.service:
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now fin1-seneschal-tunnel.service
 #
-# INSTALL (on fin1, which we cannot reach from the dev box — fin1 only
-# connects outward to fin4):
+# Replaces the per-user unit (~/.config/systemd/user/seneschal-chain-tunnel
+# .service, retired 2026-06-12): with Linger=no a user unit only runs while
+# rotwang has a session, so an unattended reboot left the tunnel down.
+# A system unit starts at boot unconditionally.
 #
-#   1. Copy this file to /etc/systemd/system/seneschal-tunnel.service
-#   2. Confirm root@fin1 already has a key authorised on fin4 (it does —
-#      the tunnel runs today as root with an ED25519 key).
-#   3. If the current hand-started tunnel is running, kill it first so
-#      the listen ports are free (`pgrep -af "ssh.*18081"` on fin1).
-#   4. systemctl daemon-reload && systemctl enable --now seneschal-tunnel
+# Runs as rotwang with the dedicated tunnel key — restricted on fin4 with
+# `restrict,port-forwarding,command="echo seneschal-tunnel-only"`, so a
+# leaked key can only open this same tunnel: no shell, no exec.
 #
-# Why plain ssh + systemd Restart instead of autossh: systemd already
-# does supervised restart with backoff, and ServerAliveInterval makes
-# ssh itself exit when the link goes quiet — autossh would only add a
-# second supervisor doing the same job.
-#
-# ExitOnForwardFailure=yes makes ssh fail fast if fin4 still has a
-# stale listener on any port (e.g. an old tunnel session that hasn't
-# timed out) instead of starting half-connected; systemd then retries
-# until the stale socket clears.
+# ExitOnForwardFailure + Restart=always: a half-up tunnel (binds taken /
+# connection dropped) dies and retries rather than lingering. fin4's sshd
+# runs ClientAliveInterval 30 / CountMax 3 (sshd_config.d/99-clientalive
+# .conf) so a dead client's stale listeners are reaped within ~90s —
+# without it a SIGKILL'd client wedges the rebind forever.
+# StartLimitIntervalSec=0: never stop retrying — after a long fin4 outage
+# the tunnel must come back on its own.
 
 [Unit]
 Description=Seneschal reverse tunnel to fin4 (monerod/zebra/NFPT forwards)
 After=network-online.target
 Wants=network-online.target
+StartLimitIntervalSec=0
 
 [Service]
 Type=exec
+User=rotwang
 ExecStart=/usr/bin/ssh -NT \
+	-i /home/rotwang/.ssh/seneschal_tunnel_ed25519 \
+	-o IdentitiesOnly=yes \
+	-o BatchMode=yes \
 	-o ExitOnForwardFailure=yes \
 	-o ServerAliveInterval=30 \
 	-o ServerAliveCountMax=3 \
 	-o ConnectTimeout=15 \
-	-o BatchMode=yes \
 	-o StrictHostKeyChecking=accept-new \
+	-o StreamLocalBindUnlink=yes \
 	-R 127.0.0.1:18081:127.0.0.1:18081 \
 	-R 127.0.0.1:8232:127.0.0.1:8232 \
 	-R 127.0.0.1:3555:127.0.0.1:3555 \
-	root@65.108.233.209
+	root@fin4
 Restart=always
-RestartSec=10
+RestartSec=15
 
 [Install]
 WantedBy=multi-user.target
