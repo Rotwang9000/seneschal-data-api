@@ -269,7 +269,7 @@ input: { chain, address, viewKey, webhookUrl }</code></pre>
 <!-- ── Credit ─────────────────────────────────────────────────── -->
 <section class="panel" id="panel-credit">
 	<h2>Credit — view balances, top up by any amount</h2>
-	<p class="muted">Drag the slider per watch to choose any top-up amount from $0.10 to $25. One wallet signature per top-up, settled via <code>POST /v1/private/topup-custom</code>. The $0.10 / $1 / $5 fixed-tier buttons are still in <em>My watches</em> if you prefer a one-click flow.</p>
+	<p class="muted">Drag the slider per watch to choose any top-up amount from $0.10 to $25. One wallet signature per top-up, settled via <code>POST /v1/private/topup-custom</code>. The $0.10 / $1 / $5 fixed-tier buttons are still in <em>My watches</em> if you prefer a one-click flow. <strong>Prefer privacy coin?</strong> Each card can also generate a <em>pay-in-coin</em> quote (XMR/ZEC) — no wallet connection required.</p>
 	<div id="credit-summary" class="credit-summary"></div>
 	<div id="credit-list"></div>
 	<div id="credit-result"></div>
@@ -300,6 +300,33 @@ const { credit } = await r.json();</code></pre>
 // On 402 the server returns a `payment-required` header with the
 // challenge baked to your requested amount; sign exactly that or
 // the retry rejects with `amount_mismatch`.</code></pre>
+	</div>
+	<div class="api-box">
+		<button class="copy" type="button" data-copy="crypto-api-curl">Copy curl</button>
+		<h4>Equivalent API call — pay in Monero / Zcash (no wallet, no x402)</h4>
+		<span class="label">1. Ask for a quote (free) — locks a USD→coin rate for the window</span>
+<pre><code id="crypto-api-curl">curl -s -X POST https://api.seneschal.space/v1/private/topup-crypto \
+	-H "content-type: application/json" \
+	-d '{
+		"watchId":        "…",
+		"watchToken":     "…",
+		"chain":          "monero",
+		"amountUsdCents": 500
+	}'
+# → { quoteId, payTo, amount:{display,coin}, memo, confirmations, expiresAt }</code></pre>
+		<span class="label">2. Send the exact amount (Monero) or include the memo (Zcash), then poll</span>
+<pre><code>curl -s -H "x-watch-token: &lt;token&gt;" \
+	https://api.seneschal.space/v1/private/topup-crypto/&lt;quoteId&gt;
+# status: pending → confirming (seen/required) → settled (watch credited)</code></pre>
+		<span class="label">MCP (for AI agents)</span>
+<pre><code>tool: seneschal_private_watch_topup_crypto
+input: { watchId, watchToken, chain, amountUsdCents }</code></pre>
+		<span class="label">Notes</span>
+<pre><code>// amountUsdCents range: 200 ($2.00 min) — 50_000 ($500 max).
+// Monero attribution is by EXACT amount (unique low-digit tag) — send
+//   precisely the quoted figure, no rounding. Zcash uses the memo.
+// Credited at the rate locked in the quote, after the stated confs.
+// No refunds on over/under-payment; re-quote if it expires.</code></pre>
 	</div>
 </section>
 
@@ -1066,6 +1093,88 @@ $("watches-refresh").addEventListener("click", renderWatches);
 // One slider per watch. Picks an atomic USDC amount in $0.10 steps
 // from $0.10 to $25, hits /v1/private/topup-custom with that
 // amount, and updates the row + summary on success.
+
+// ── Pay-in-coin (XMR/ZEC) top-ups ─────────────────────────────────
+// These call the FREE quote endpoint (no x402, no connected wallet) —
+// you pay us in Monero/Zcash and the receive-poller credits the watch.
+async function requestCryptoQuote(w, cents) {
+	const out = $("credit-crypto-out-" + w.id);
+	const sel = $("credit-crypto-chain-" + w.id);
+	const chain = sel ? sel.value : "monero";
+	if (out) out.innerHTML = '<span class="muted">Requesting a quote…</span>';
+	try {
+		const r = await fetch(`${API_BASE}/v1/private/topup-crypto`, {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({ watchId: w.id, watchToken: w.token, chain, amountUsdCents: cents })
+		});
+		const body = await r.json().catch(() => ({}));
+		if (r.status < 200 || r.status >= 300) {
+			if (out) out.innerHTML = `<span style="color:var(--danger)">Quote failed (${esc(r.status)}): ${esc(body?.error?.message ?? "unknown error")}</span>`;
+			return;
+		}
+		renderCryptoQuote(w, body);
+	}
+	catch (err) {
+		if (out) out.innerHTML = `<span style="color:var(--danger)">Quote failed: ${esc(err?.message ?? err)}</span>`;
+	}
+}
+
+function renderCryptoQuote(w, q) {
+	const out = $("credit-crypto-out-" + w.id);
+	if (!out) return;
+	const coin = q.amount?.coin ?? "";
+	const row = (label, value) => `<div style="display:flex;gap:0.5em;margin:0.18em 0"><span class="muted" style="min-width:7.5em">${label}</span>${value}</div>`;
+	const memoRow = q.memo ? row("Memo (required)", `<code>${esc(q.memo)}</code>`) : "";
+	out.innerHTML = `
+		<div style="background:var(--panel,#181826);border:1px solid var(--border,#2a2a3a);border-radius:8px;padding:0.6em 0.7em">
+			${row("Send exactly", `<code>${esc(q.amount?.display ?? "")} ${esc(coin)}</code>`)}
+			${row("To address", `<code style="word-break:break-all">${esc(q.payTo ?? "")}</code>`)}
+			${memoRow}
+			${row("You get", `${esc(q.credit?.usd ?? "")} after ${esc(q.confirmations?.required ?? "?")} confirmations`)}
+			${row("Expires", `${esc(formatLocalTime(q.expiresAt))}`)}
+			<div class="muted" style="margin-top:0.4em;font-size:0.86em">${esc(q.instructions ?? "")}</div>
+			<div class="muted" style="margin-top:0.35em;font-size:0.8em">API: <code>POST /v1/private/topup-crypto</code> for the quote, then <code>GET /v1/private/topup-crypto/${esc(q.quoteId)}</code> with your <code>x-watch-token</code> to poll. See the box below for the full call.</div>
+			<button type="button" class="action ghost" data-act="credit-crypto-status" style="margin-top:0.5em">Check status</button>
+			<div id="credit-crypto-status-${esc(q.quoteId)}" class="meta" style="margin-top:0.4em"></div>
+		</div>`;
+	const sBtn = out.querySelector('button[data-act="credit-crypto-status"]');
+	if (sBtn) sBtn.addEventListener("click", () => checkCryptoQuote(w, q.quoteId));
+}
+
+async function checkCryptoQuote(w, quoteId) {
+	const el = $("credit-crypto-status-" + quoteId);
+	if (el) el.innerHTML = '<span class="muted">Checking…</span>';
+	try {
+		const r = await fetch(`${API_BASE}/v1/private/topup-crypto/${encodeURIComponent(quoteId)}`, { headers: { "x-watch-token": w.token } });
+		const body = await r.json().catch(() => ({}));
+		if (r.status < 200 || r.status >= 300) {
+			if (el) el.innerHTML = `<span style="color:var(--danger)">${esc(body?.error?.message ?? r.status)}</span>`;
+			return;
+		}
+		const seen = body.confirmations?.seen ?? 0;
+		const need = body.confirmations?.required ?? "?";
+		let msg;
+		if (body.status === "settled") {
+			msg = `<span style="color:var(--ok,#3fb950)">Settled — ${esc(body.credit?.usd ?? "")} credited.</span>`;
+			renderCredit();
+		}
+		else if (body.status === "confirming") msg = `Payment seen — confirming (${esc(seen)}/${esc(need)}).`;
+		else if (body.status === "expired") msg = `<span style="color:var(--warn)">Quote expired — request a new one.</span>`;
+		else if (body.status === "pending") msg = `Awaiting your payment — send the exact amount${body.memo ? " with the memo" : ""}.`;
+		else msg = `Status: ${esc(body.status)}.`;
+		if (el) el.innerHTML = msg;
+	}
+	catch (err) {
+		if (el) el.innerHTML = `<span style="color:var(--danger)">${esc(err?.message ?? err)}</span>`;
+	}
+}
+
+function formatLocalTime(iso) {
+	try { return new Date(iso).toLocaleTimeString(); }
+	catch { return String(iso ?? ""); }
+}
+
 async function renderCredit() {
 	refreshWatchesCount();
 	const watches = loadWatches();
@@ -1112,6 +1221,17 @@ async function renderCredit() {
 				<button type="button" data-cents="2500">+$25</button>
 			</div>
 			<button type="button" class="action" data-act="credit-topup" data-id="${idAttr}" style="margin-top:0.6em">Top up $1.00</button>
+			<div style="margin-top:0.85em;border-top:1px solid var(--border,#2a2a3a);padding-top:0.7em">
+				<div class="meta" style="margin-bottom:0.45em">Or pay in privacy coin — no wallet connection needed. Funds the slider amount above in XMR/ZEC.</div>
+				<div style="display:flex;gap:0.4em;flex-wrap:wrap;align-items:center">
+					<select id="credit-crypto-chain-${idAttr}" aria-label="privacy coin to pay in">
+						<option value="monero">Monero (XMR)</option>
+						<option value="zcash">Zcash (ZEC)</option>
+					</select>
+					<button type="button" class="action ghost" data-act="credit-crypto" data-id="${idAttr}">Get pay-in-coin quote</button>
+				</div>
+				<div id="credit-crypto-out-${idAttr}" class="meta" style="margin-top:0.5em"></div>
+			</div>
 		</div>`;
 	}).join("");
 	listEl.innerHTML = cards;
@@ -1165,6 +1285,11 @@ async function renderCredit() {
 				btn.textContent = `Top up ${fmtDollars(sliderApi.getCents())}`;
 			}
 		});
+		// Pay-in-coin: request a free quote for the current slider amount.
+		const cryptoBtn = listEl.querySelector(`button[data-act="credit-crypto"][data-id="${CSS.escape(id)}"]`);
+		if (cryptoBtn) {
+			cryptoBtn.addEventListener("click", () => requestCryptoQuote(w, sliderApi.getCents()));
+		}
 		// Repaint the button label as the slider moves.
 		$("credit-range-" + id).addEventListener("input", () => {
 			btn.textContent = `Top up ${fmtDollars(sliderApi.getCents())}`;

@@ -96,6 +96,11 @@ Submit bugs and feature requests to <a href="https://t.me/OrknetP"><code>@Orknet
 to see the data without writing a single line.
 </div>
 
+<div class="callout callout-info">
+<strong>New &middot; 2026-06-05:</strong> Zcash patched a critical Orchard bug &mdash; a <em>supply</em> bug, not a privacy one.
+<a href="/orchard-bug-view-keys.html">What happened, what node operators must do, and why view-key payment monitoring is unaffected &raquo;</a>
+</div>
+
 <section class="hero">
 <h2>Private Watch &mdash; the headline product</h2>
 <p>Get an HMAC-signed webhook the instant a Monero or Zcash payment lands at your address. You supply a <strong>view key</strong> (read-only, cannot spend), an address, and a webhook URL. We POST you a notification on every balance change. <strong>Prepaid credit meter: $0.02 per day idle + $0.005 per webhook delivered</strong> &mdash; no account, no API key, no node.</p>
@@ -103,6 +108,8 @@ to see the data without writing a single line.
 <p><strong>Who it&rsquo;s for:</strong> merchants accepting XMR or ZEC, donation pages, tip jars, payment bots, anyone selling something off-platform who would rather not run a 100&nbsp;GB <code>monerod</code> or 300&nbsp;GB <code>zebra</code> just to know whether the customer paid. View keys never let us move funds; if our DB leaks we can&rsquo;t spend anything.</p>
 
 <p><strong>How the meter works:</strong> the first $0.10 (paywall on watch creation) buys 5 idle days. After that, top up <strong>any amount</strong> via dedicated paywalled paths: $0.10, $1.00, or $5.00 a pop. Every webhook body carries a <code>credit</code> block so your receiver always knows how much it has left. We&rsquo;ll fire one <code>low_credit</code> warning when you have ~2 idle days remaining, even if no payments have come in.</p>
+
+<p><strong>Pay in privacy coin, not just USDC.</strong> A Monero/Zcash service that only took stablecoins on a transparent chain would be missing the point. So you can top a watch up by sending <strong>XMR or ZEC</strong> directly: <code>POST /v1/private/topup-crypto</code> is free to call and returns a receiving address plus the exact amount to send (Monero uses a unique-amount invoice tag; Zcash uses a memo) at a USD rate locked for the quote window. We detect your payment with the <em>same view-key scanner this product sells</em> &mdash; dogfooding the whole way down &mdash; and we hold only a view key for that wallet, never a spend key. No wallet connection, no x402, no API key.</p>
 
 <p><strong>Why it&rsquo;s cheap:</strong> small users pay cents per month even with no traffic. Heavy users pay a few dollars even after thousands of webhook deliveries. Compare to a self-hosted full node (~$30/mo VPS + storage), light-wallet subscriptions ($5&ndash;$50/mo), or merchant gateways (1&ndash;2%): the only ones with skin in the game.</p>
 
@@ -122,6 +129,15 @@ curl -X POST https://api.seneschal.space/v1/private/topup-1 \
   -H 'x-payment: &lt;eip3009 payload, $1.00 USDC on Base&gt;' \
   -H 'content-type: application/json' \
   -d '{"watchId":"...","watchToken":"..."}'
+
+# 2b. ...or pay in Monero/Zcash instead (FREE quote, no x402, no key):
+curl -X POST https://api.seneschal.space/v1/private/topup-crypto \
+  -H 'content-type: application/json' \
+  -d '{"watchId":"...","watchToken":"...","chain":"monero","amountUsdCents":500}'
+# -> { quoteId, payTo, amount:{display,coin}, memo, confirmations, expiresAt }
+# Send the exact amount (Monero) or include the memo (Zcash), then poll:
+curl -s -H 'x-watch-token: ...' \
+  https://api.seneschal.space/v1/private/topup-crypto/&lt;quoteId&gt;
 
 # 3. One-off historical lookup (returns notes; view key never persists):
 curl -X POST https://api.seneschal.space/v1/private/historical \
@@ -199,8 +215,8 @@ figure.pw-flow figcaption { font-size: 0.85em; color: #6b6b6b; margin: 0.4em 0 0
 			</svg>
 			<h4>Top up credit</h4>
 		</div>
-		<p class="pw-price"><strong>$0.10 / $1.00 / $5.00</strong> · x402 tiers</p>
-		<p><code>POST /v1/private/topup{,-1,-5}</code> &mdash; $1 buys ~50 idle days. <code>low_credit</code> webhook tells you when to top up.</p>
+		<p class="pw-price"><strong>USDC (x402) or XMR/ZEC</strong> · any amount</p>
+		<p><code>POST /v1/private/topup{,-1,-5,-custom}</code> &mdash; $1 buys ~50 idle days. Or pay in coin (free quote) via <code>POST /v1/private/topup-crypto</code>. <code>low_credit</code> webhook tells you when to top up.</p>
 	</div>
 	<div class="pw-tile">
 		<div class="pw-head">
@@ -438,6 +454,7 @@ plus the Private Watch suite:
 <code>seneschal_private_watch_info</code>,
 <code>seneschal_private_watch_create</code>,
 <code>seneschal_private_watch_topup</code>,
+<code>seneschal_private_watch_topup_crypto</code>,
 <code>seneschal_private_watch_historical</code>,
 <code>seneschal_private_watch_derive_viewkey</code>,
 <code>seneschal_private_watch_status</code>,
@@ -629,9 +646,14 @@ with an operator-supplied master key. See
 <a href="#private-watch-detail">private watch below</a>.</td>
 </tr>
 <tr>
-<td><code>POST /v1/private/topup</code> &mdash; $0.10<br><code>POST /v1/private/topup-1</code> &mdash; $1.00<br><code>POST /v1/private/topup-5</code> &mdash; $5.00</td>
+<td><code>POST /v1/private/topup</code> &mdash; $0.10<br><code>POST /v1/private/topup-1</code> &mdash; $1.00<br><code>POST /v1/private/topup-5</code> &mdash; $5.00<br><code>POST /v1/private/topup-custom</code> &mdash; any $0.10&ndash;$25</td>
 <td><strong>tiered</strong></td>
-<td><strong>Top up an existing watch.</strong> Three explicit tiers so the x402 paywall can quote each price up front. $0.10 buys ~5 idle days, $1.00 buys ~50, $5.00 buys ~250. Body: <code>{watchId, watchToken}</code>.</td>
+<td><strong>Top up an existing watch (USDC via x402).</strong> Explicit tiers so the x402 paywall can quote each price up front. $0.10 buys ~5 idle days, $1.00 buys ~50, $5.00 buys ~250; <code>topup-custom</code> takes any amount. Body: <code>{watchId, watchToken}</code> (plus <code>amountAtomic</code> for custom).</td>
+</tr>
+<tr>
+<td><code>POST /v1/private/topup-crypto</code><br><code>GET /v1/private/topup-crypto/:quoteId</code></td>
+<td><strong>FREE quote<br>(pay in coin)</strong></td>
+<td><strong>Top up by paying in Monero/Zcash.</strong> The POST is free and returns a quote &mdash; a receiving address, the exact coin amount to send (Monero: a unique-amount invoice tag; Zcash: a memo), and a USD rate locked for ~15&nbsp;min. Send the payment, then poll the GET (header <code>x-watch-token</code>) until <code>status=settled</code>. We detect it with our own view-key scan and credit the watch after the stated confirmations; we never hold a spend key. Body: <code>{watchId, watchToken, chain, amountUsdCents}</code> ($2&ndash;$500).</td>
 </tr>
 <tr>
 <td><code>POST /v1/private/historical</code></td>
@@ -861,6 +883,7 @@ should pass an explicit <code>birthdayHeight</code> matching wallet age.
 <strong>MCP.</strong> Agents already inside a paid MCP session can use
 <code>seneschal_private_watch_create</code>,
 <code>seneschal_private_watch_topup</code>,
+<code>seneschal_private_watch_topup_crypto</code>,
 <code>seneschal_private_watch_historical</code>,
 <code>seneschal_private_watch_derive_viewkey</code>,
 <code>seneschal_private_watch_status</code>,

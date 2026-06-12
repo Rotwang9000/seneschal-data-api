@@ -101,6 +101,7 @@ describe('in-process tool surface', () => {
 			'seneschal_private_watch_historical',
 			'seneschal_private_watch_info',
 			'seneschal_private_watch_topup',
+			'seneschal_private_watch_topup_crypto',
 			'seneschal_q',
 			'seneschal_recent_liquidations',
 			'seneschal_stats_overview'

@@ -30,6 +30,7 @@ MAPPINGS=(
 	"index.html:docs/index.html"
 	"stats.html:stats/index.html"
 	"paymaster.html:docs/paymaster.html"
+	"orchard-bug-view-keys.html:docs/orchard-bug-view-keys.html"
 	"panel.html:panel/index.html"
 	"privacy.html:privacy.html"
 	"terms.html:terms.html"

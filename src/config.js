@@ -214,7 +214,58 @@ export const config = Object.freeze({
 	// someone using us as a free seed-grinder. 6 calls / IP / minute
 	// is enough for a developer iterating, way too slow for
 	// brute-force.
-	privateWatchDerivePerIpPerMin: asInt('PRIVATE_WATCH_DERIVE_PER_IP_PER_MIN', 6)
+	privateWatchDerivePerIpPerMin: asInt('PRIVATE_WATCH_DERIVE_PER_IP_PER_MIN', 6),
+
+	// ── Privacy-coin credit top-ups (fund a watch by paying in XMR/ZEC) ─
+	// Lets a user top up a watch's credit meter by sending Monero or
+	// Zcash to OUR receiving wallet instead of USDC over x402. We dogfood
+	// the very product we sell: the server holds only the receiving
+	// wallet's *view key* (never the spend key) and detects incoming
+	// payments through NFPT, exactly as a customer's watch does.
+	//
+	// The feature is OFF per-chain until that chain's receive address +
+	// view key are both set — until then the endpoints answer 503
+	// `crypto_topup_not_configured` and the receive-poller refuses to
+	// start. Spend keys / seeds MUST be kept offline; the box can see
+	// payments but can never move them.
+	xmrRecvAddress: asString('SENESCHAL_XMR_RECV_ADDRESS', ''),
+	xmrRecvViewKey: asString('SENESCHAL_XMR_RECV_VIEW_KEY', ''),
+	// Restore/creation height of the receiving XMR wallet. The poller
+	// scans from here each tick instead of re-walking the whole chain;
+	// set it to the wallet's birthday block in production. 0 = let the
+	// scanner use its default starting point.
+	xmrRecvFromHeight: asInt('SENESCHAL_XMR_RECV_FROM_HEIGHT', 0),
+	zecRecvAddress: asString('SENESCHAL_ZEC_RECV_ADDRESS', ''),
+	zecRecvUfvk: asString('SENESCHAL_ZEC_RECV_UFVK', ''),
+	// Birthday height for the receiving UFVK — set this to the block
+	// height at which you create the wallet so the scanner never walks
+	// years of history on every tick. 0 falls back to the NU6 default.
+	zecRecvBirthdayHeight: asInt('SENESCHAL_ZEC_RECV_BIRTHDAY_HEIGHT', 0),
+	// Monero scan-from height for the receiving wallet. Set to the block
+	// height at which the receiving wallet was created so monero-lws
+	// doesn't rescan the whole chain. 0 lets the upstream subscription
+	// decide (fine for a freshly imported view key).
+	xmrRecvFromHeight: asInt('SENESCHAL_XMR_RECV_FROM_HEIGHT', 0),
+	// Quote policy. A quote locks a USD↔coin rate for a short window;
+	// the payer must send the quoted amount before the quote expires.
+	cryptoTopupMinUsdCents: asInt('CRYPTO_TOPUP_MIN_USD_CENTS', 200),     // $2.00 floor (below this, confs/dust aren't worth it)
+	cryptoTopupMaxUsdCents: asInt('CRYPTO_TOPUP_MAX_USD_CENTS', 50_000),  // $500.00 ceiling
+	cryptoTopupSpreadBps: asInt('CRYPTO_TOPUP_SPREAD_BPS', 400),          // 4% spread over spot to cover volatility during the window
+	cryptoTopupQuoteTtlSec: asInt('CRYPTO_TOPUP_QUOTE_TTL_SEC', 900),     // 15 min to pay
+	cryptoTopupXmrConfirmations: asInt('CRYPTO_TOPUP_XMR_CONFIRMATIONS', 10),
+	cryptoTopupZecConfirmations: asInt('CRYPTO_TOPUP_ZEC_CONFIRMATIONS', 8),
+	// Receive-poller cadence (separate process, shares the watch DB +
+	// NFPT client). Kept brisk so a confirmed payment credits quickly.
+	cryptoRecvPollIntervalSec: asInt('CRYPTO_RECV_POLL_INTERVAL_SEC', 60),
+	// Price oracle: CoinGecko simple-price by default (no key). Cached.
+	cryptoPriceUrl: asString('CRYPTO_PRICE_URL', 'https://api.coingecko.com/api/v3/simple/price'),
+	cryptoPriceCacheTtlMs: asInt('CRYPTO_PRICE_CACHE_TTL_MS', 60_000),
+	cryptoPriceTimeoutMs: asInt('CRYPTO_PRICE_TIMEOUT_MS', 5_000),
+	// Optional hard fallback prices in whole USD if the oracle is
+	// unreachable at quote time. 0 = "no fallback, refuse to quote"
+	// (we never want to mis-price a payment on a stale guess).
+	xmrUsdFallback: asInt('XMR_USD_FALLBACK', 0),
+	zecUsdFallback: asInt('ZEC_USD_FALLBACK', 0)
 });
 
 export default config;

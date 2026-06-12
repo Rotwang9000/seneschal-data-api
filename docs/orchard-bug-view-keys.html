@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>The Zcash Orchard bug — and why view-key payment monitoring keeps working | Seneschal</title>
+<meta name="description" content="On 2026-06-05 Zcash disclosed and fixed a critical Orchard soundness bug that could have minted counterfeit ZEC. Here's what happened, what node operators must do, and why read-only view-key payment monitoring (what Seneschal Private Watch does) is unaffected.">
+<link rel="canonical" href="https://docs.seneschal.space/orchard-bug-view-keys.html">
+<meta property="og:title" content="The Zcash Orchard bug — and why view-key payment monitoring keeps working">
+<meta property="og:description" content="A critical Orchard soundness bug let the verifier accept non-canonical proofs. It was a supply bug, not a privacy bug — view-key payment detection is unaffected. What to do if you accept ZEC.">
+<meta property="og:type" content="article">
+<meta property="og:url" content="https://docs.seneschal.space/orchard-bug-view-keys.html">
+<meta property="og:image" content="https://docs.seneschal.space/og.png">
+<meta property="og:site_name" content="Seneschal">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="The Zcash Orchard bug — and why view-key payment monitoring keeps working">
+<meta name="twitter:description" content="A critical Orchard soundness bug let the verifier accept non-canonical proofs. It was a supply bug, not a privacy bug — view-key payment detection is unaffected.">
+<meta name="twitter:image" content="https://docs.seneschal.space/og.png">
+<style>
+:root { --brand:#1462b3; --brand-deep:#0d3a6d; --ink:#161616; --muted:#6b6b6b; --warn:#b35900; --soft:#f4f6fb; --card-border:#d9e0ec; }
+* { box-sizing: border-box }
+html, body { background: #fdfdfc; color: var(--ink); margin: 0 }
+body { font: 16px/1.6 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; max-width: 50em; margin: 0 auto; padding: 1.4em 1.2em 4em }
+h1 { font-weight: 600; font-size: 1.6em; margin: 0 0 0.1em; color: var(--brand-deep) }
+h2 { font-weight: 600; font-size: 1.15em; margin: 1.6em 0 0.4em; color: var(--brand-deep); border-bottom: 1px solid var(--card-border); padding-bottom: 0.25em }
+h3 { font-weight: 600; font-size: 0.97em; margin: 1em 0 0.3em }
+code { font-family: ui-monospace, "JetBrains Mono", Menlo, Consolas, monospace; background: var(--soft); padding: 1px 5px; border-radius: 3px; font-size: 0.92em }
+a { color: var(--brand) }
+.lead { color: var(--muted); margin: 0.2em 0 1em; font-size: 0.97em }
+.meta { color: var(--muted); font-size: 0.88em }
+.callout { background: #fff8e6; border: 1px solid #e8d6a3; border-left: 4px solid var(--warn); padding: 0.6em 0.9em; border-radius: 4px; margin: 0.7em 0; font-size: 0.93em; color: #5a3d00 }
+.callout.info { background: #eaf3fc; border-color: #bcd4ed; border-left-color: var(--brand); color: var(--brand-deep) }
+.callout.ok { background: #eafaf0; border-color: #b6e3c6; border-left-color: #1f8a4c; color: #155e34 }
+table { border-collapse: collapse; width: 100%; margin: 0.6em 0; font-size: 0.93em }
+table th, table td { border: 1px solid var(--card-border); padding: 0.45em 0.7em; vertical-align: top; text-align: left }
+table th { background: var(--soft); font-weight: 600 }
+ul, ol { padding-left: 1.4em }
+li { margin: 0.2em 0 }
+nav.top { font-size: 0.9em; margin-bottom: 0.4em }
+nav.top a { color: var(--brand); margin-right: 0.6em; text-decoration: none; border-bottom: 1px dotted var(--brand) }
+footer { color: var(--muted); font-size: 0.88em; margin-top: 3em; padding-top: 1em; border-top: 1px solid var(--card-border) }
+</style>
+</head>
+<body>
+
+<nav class="top">
+	<a href="https://seneschal.space/">Landing</a>·
+	<a href="https://docs.seneschal.space/">Docs</a>·
+	<a href="https://panel.seneschal.space/">Control panel</a>·
+	<a href="https://stats.seneschal.space/">Live stats</a>·
+	<a href="/privacy.html">Privacy</a>
+</nav>
+
+<h1>The Zcash Orchard bug — and why view-key payment monitoring keeps working</h1>
+<p class="meta">Published 2026-06-05 · by the <strong>Seneschal</strong> operator · ~5 min read</p>
+
+<div class="callout info"><strong>TL;DR.</strong> On 2026-06-05 Zcash disclosed and emergency-fixed a critical <em>soundness</em> bug in the Orchard shielded pool that could, in principle, have minted counterfeit ZEC. It was a <strong>supply bug, not a privacy bug</strong>: nobody&rsquo;s view key leaked and shielded transactions stayed private. If you run a node, upgrade to <strong>Zebra&nbsp;5.0.0 (NU6.2)</strong>. If you <em>accept</em> ZEC and watch payments with a read-only view key — the way <a href="https://docs.seneschal.space/">Seneschal Private Watch</a> does — your detection pipeline is unaffected; keep waiting for confirmations and you&rsquo;re fine.</div>
+
+<h2>What actually happened</h2>
+<p>Zcash&rsquo;s newest shielded pool, <strong>Orchard</strong>, proves transaction validity with a zero-knowledge circuit (Halo&nbsp;2). On 29&nbsp;May&nbsp;2026, security researcher Taylor Hornby — working on an audit for Shielded Labs, and notably with the help of an <strong>AI model</strong> — found that the verifier would accept Orchard proofs of a <strong>non-canonical size</strong>. That gap (tracked as advisory <code>GHSA-jfw5-j458-pfv6</code>) was enough to forge a valid-looking proof and, in a local test, generate <em>unlimited, undetectable</em> counterfeit ZEC inside the pool. The flaw had been latent since Orchard activated in 2022.</p>
+<p>The response was a rare two-step emergency upgrade:</p>
+<ul>
+	<li><strong>Zebra 4.5.3</strong> — an emergency soft fork that temporarily disabled all Orchard actions (mainnet block <code>3,363,426</code>, 2&nbsp;June).</li>
+	<li><strong>Zebra 5.0.0 / NU6.2</strong> — a hard fork that re-enabled Orchard with the corrected circuit and a new pinned verifying key (mainnet block <code>3,364,600</code>, 3&nbsp;June). A hard fork was unavoidable because fixing a circuit means changing the verifying key.</li>
+</ul>
+<p>The Zcash Foundation reported <strong>no evidence of exploitation</strong> and no impact on user privacy, though it&rsquo;s candid that — by the very nature of a shielded pool — counterfeiting can&rsquo;t be cryptographically ruled out after the fact. Sources: <a href="https://zfnd.org/zebra-4-5-3-and-5-0-0-emergency-soft-fork-and-nu6-2-activation/">Zcash Foundation</a>, <a href="https://cointelegraph.com/news/zcash-orchard-vulnerability-emergency-upgrade">Cointelegraph</a>, <a href="https://www.theblock.co/post/403698/zcash-vulnerability-zec-drops">The&nbsp;Block</a>.</p>
+
+<h2>If you run a Zcash node: upgrade and verify</h2>
+<p>Make sure you&rsquo;re on the fixed software and following the post-fork chain — otherwise you&rsquo;re stranded on a dead pre-NU6.2 fork:</p>
+<ul>
+	<li>Run <strong>Zebra&nbsp;5.0.0+</strong> (or a <code>zcashd</code>/wallet build that activates NU6.2).</li>
+	<li>Confirm NU6.2 shows <code>active</code> at height <code>3,364,600</code> and your tip matches a public explorer. With Zebra: <code>getblockchaininfo</code> &rarr; <code>upgrades</code> &rarr; <code>NU6.2: active</code>.</li>
+</ul>
+<div class="callout ok"><strong>Our own nodes.</strong> Seneschal&rsquo;s Zcash node was upgraded to Zebra&nbsp;5.0.0 around the activation and is following the canonical chain (NU6.2 active, tip in sync), so Private Watch&rsquo;s Zcash detection has been running against the corrected network throughout.</div>
+
+<h2>Why view-key payment monitoring is unaffected</h2>
+<p>This is the part that matters if you accept privacy-coin payments. <strong>Private Watch detects incoming payments using your read-only view key</strong> (a Zcash Unified Full Viewing Key, or a Monero secret view key). Two reasons the Orchard bug doesn&rsquo;t touch that:</p>
+<ul>
+	<li><strong>It was a proof-<em>soundness</em> bug, not a view-<em>key</em> bug.</strong> The flaw was about whether the network would accept a forged proof (a consensus/supply question). It is completely independent of whether a view key can <em>see</em> a payment — which it always can. No view keys were exposed, and detection logic doesn&rsquo;t change.</li>
+	<li><strong>Coin integrity is a network job, and it&rsquo;s now fixed.</strong> Whether the ZEC you received is &ldquo;real&rdquo; is enforced by consensus, which NU6.2 has corrected. Your job as a receiver is to <strong>wait for confirmations</strong> before treating a payment as final — which Private Watch already does (configurable confirmation depth) before it ever fires a webhook or credits a balance.</li>
+</ul>
+<p>In other words: the mechanism Private Watch sells — &ldquo;hold a read-only key, get a signed webhook when money lands, never touch a spend key&rdquo; — sat behind the same confirmation discipline that protects you here. Nothing about it needed to change.</p>
+
+<h2>The bigger pattern — and Monero</h2>
+<p>The Orchard bug belongs to a recurring privacy-coin failure mode: <strong>a verifier accepting a non-canonical encoding</strong>. Monero uses different cryptography (RingCT: CLSAG ring signatures + Bulletproofs+ range proofs, not Halo&nbsp;2), so this <em>exact</em> bug can&rsquo;t exist there — but the <em>class</em> absolutely has precedent:</p>
+<ul>
+	<li>The <a href="https://www.getmonero.org/2017/05/17/disclosure-of-a-major-bug-in-cryptonote-based-currencies.html">2017 CryptoNote key-image bug</a>, where low-order (non-canonical) curve points were accepted, enabling undetectable infinite-coin double-spends. Monero patched it before exploitation; another CryptoNote coin was not so lucky.</li>
+	<li><a href="https://blog.quarkslab.com/security-audit-of-monero-bulletproofs.html">Quarkslab&rsquo;s Bulletproofs audit</a>, which flagged missing input checks (non-reduced scalars, off-curve points) and deserialization size-validation issues.</li>
+</ul>
+<p>The lesson for anyone <em>receiving</em> privacy-coin payments is the same regardless of chain: run patched nodes, and don&rsquo;t consider a payment final until it has the confirmations you require.</p>
+
+<h2>How Seneschal Private Watch fits</h2>
+<p>Private Watch is a payment-webhook service for Monero and Zcash. You give us a receiving address and its <strong>read-only view key</strong>; we watch the chain on our own full nodes and POST you a signed (HMAC-SHA256) webhook when a payment lands and clears your confirmation threshold. No spend key ever leaves your hands, and you don&rsquo;t have to run a node.</p>
+<ul>
+	<li><strong>Try it / read the spec:</strong> <a href="https://api.seneschal.space/v1/private/info"><code>api.seneschal.space/v1/private/info</code></a></li>
+	<li><strong>No-code control panel:</strong> <a href="https://panel.seneschal.space/">panel.seneschal.space</a> — create watches, top up, run a one-off historical scan.</li>
+	<li><strong>Pay as you go</strong> in USDC on Base (x402) — or top up credit directly in <strong>Monero / Zcash</strong>.</li>
+</ul>
+
+<footer>
+	<p>Questions or corrections: <a href="https://t.me/OrknetP"><code>@OrknetP</code> on Telegram</a>. This article is informational, not security advice for your own systems. See also our <a href="/privacy.html">Privacy policy</a> and <a href="/terms.html">Terms</a>.</p>
+</footer>
+
+</body>
+</html>

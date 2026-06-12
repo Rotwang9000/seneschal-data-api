@@ -182,25 +182,92 @@ export function classifyUnit({ service, timer, expected, nowMs }) {
 }
 
 /**
- * Build the overall watchdog report from a map of per-unit
- * classifications + per-script presence checks. Returns:
- *   { overall: "ok"|"degraded", units: {...}, scripts: {...},
- *     summary: "human-readable one-liner" }
+ * Run a single HTTP probe and classify the result. Probes cover the
+ * pieces systemd can't see: the fin1 reverse-tunnel endpoints
+ * (monerod / zebra / NFPT arrive on fin4's loopback — if the tunnel
+ * drops, every unit still looks green while the privacy products 502)
+ * and the public x402 paywall (a paid route that stops returning 402
+ * is either down or silently giving the data away).
+ *
+ * @param {object} probe
+ * @param {string} probe.name                human-readable identifier
+ * @param {string} probe.url                 absolute http(s) URL
+ * @param {string} [probe.method]            default 'GET'
+ * @param {string} [probe.body]              request body; sent with content-type application/json
+ * @param {number} [probe.expectStatus]      default 200 (e.g. 402 for the paywall probe)
+ * @param {string} [probe.expectHeader]      response header that must be present
+ * @param {string[]} [probe.expectBodyIncludes] substrings the body must contain
+ * @param {number} [probe.timeoutMs]         default 8000
+ * @param {function} [fetchImpl]             injected for tests
+ * @returns {Promise<{status: 'ok'|'failed', reason: string, httpStatus?: number, elapsedMs: number}>}
  */
-export function buildReport({ units = {}, scripts = {}, nowMs }) {
+export async function runProbe(probe, { fetchImpl } = {}) {
+	const f = fetchImpl ?? globalThis.fetch;
+	const expectStatus = probe.expectStatus ?? 200;
+	const timeoutMs = probe.timeoutMs ?? 8000;
+	const ctrl = new AbortController();
+	const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+	const startedMs = Date.now();
+	try {
+		const init = { method: probe.method ?? 'GET', signal: ctrl.signal };
+		if (probe.body != null) {
+			init.headers = { 'content-type': 'application/json' };
+			init.body = typeof probe.body === 'string' ? probe.body : JSON.stringify(probe.body);
+		}
+		const res = await f(probe.url, init);
+		const elapsedMs = Date.now() - startedMs;
+		if (res.status !== expectStatus) {
+			return { status: 'failed', reason: `http ${res.status} (expected ${expectStatus})`, httpStatus: res.status, elapsedMs };
+		}
+		if (probe.expectHeader && !res.headers?.get?.(probe.expectHeader)) {
+			return { status: 'failed', reason: `missing response header '${probe.expectHeader}'`, httpStatus: res.status, elapsedMs };
+		}
+		if (Array.isArray(probe.expectBodyIncludes) && probe.expectBodyIncludes.length > 0) {
+			const text = await res.text();
+			for (const needle of probe.expectBodyIncludes) {
+				if (!text.includes(needle)) {
+					return { status: 'failed', reason: `body missing '${needle}'`, httpStatus: res.status, elapsedMs };
+				}
+			}
+		}
+		return { status: 'ok', reason: `http ${res.status} in ${elapsedMs}ms`, httpStatus: res.status, elapsedMs };
+	}
+	catch (err) {
+		const elapsedMs = Date.now() - startedMs;
+		const reason = err?.name === 'AbortError'
+			? `timeout after ${timeoutMs}ms`
+			: `network: ${err?.cause?.code ?? err?.message ?? String(err)}`;
+		return { status: 'failed', reason, elapsedMs };
+	}
+	finally {
+		clearTimeout(timer);
+	}
+}
+
+/**
+ * Build the overall watchdog report from a map of per-unit
+ * classifications + per-script presence checks + per-probe results.
+ * Returns:
+ *   { overall: "ok"|"degraded", units: {...}, scripts: {...},
+ *     probes: {...}, summary: "human-readable one-liner" }
+ */
+export function buildReport({ units = {}, scripts = {}, probes = {}, nowMs }) {
 	const unitEntries = Object.entries(units);
 	const scriptEntries = Object.entries(scripts);
+	const probeEntries = Object.entries(probes);
 	const anyBad = (entries) => entries.some(([, v]) => v.status !== 'ok');
-	const overall = (anyBad(unitEntries) || anyBad(scriptEntries)) ? 'degraded' : 'ok';
+	const overall = (anyBad(unitEntries) || anyBad(scriptEntries) || anyBad(probeEntries)) ? 'degraded' : 'ok';
 
 	const failingUnits = unitEntries.filter(([, v]) => v.status === 'failed').map(([k]) => k);
 	const staleUnits = unitEntries.filter(([, v]) => v.status === 'stale').map(([k]) => k);
 	const unknownUnits = unitEntries.filter(([, v]) => v.status === 'unknown').map(([k]) => k);
 	const missingScripts = scriptEntries.filter(([, v]) => v.status !== 'ok').map(([k]) => k);
+	const failingProbes = probeEntries.filter(([, v]) => v.status !== 'ok').map(([k]) => k);
 
 	let summary;
 	if (overall === 'ok') {
-		summary = `OK · ${unitEntries.length} units + ${scriptEntries.length} scripts healthy`;
+		const probePart = probeEntries.length ? ` + ${probeEntries.length} probes` : '';
+		summary = `OK · ${unitEntries.length} units + ${scriptEntries.length} scripts${probePart} healthy`;
 	}
 	else {
 		const parts = [];
@@ -208,6 +275,7 @@ export function buildReport({ units = {}, scripts = {}, nowMs }) {
 		if (staleUnits.length) parts.push(`${staleUnits.length} stale (${staleUnits.join(', ')})`);
 		if (unknownUnits.length) parts.push(`${unknownUnits.length} unknown (${unknownUnits.join(', ')})`);
 		if (missingScripts.length) parts.push(`${missingScripts.length} script(s) missing (${missingScripts.join(', ')})`);
+		if (failingProbes.length) parts.push(`${failingProbes.length} probe(s) failing (${failingProbes.join(', ')})`);
 		// Defensive: if we somehow flipped to degraded with no
 		// recognised buckets, surface that explicitly rather than
 		// printing "DEGRADED · " (the bug the watchdog itself caught
@@ -221,6 +289,7 @@ export function buildReport({ units = {}, scripts = {}, nowMs }) {
 		overall,
 		units,
 		scripts,
+		probes,
 		summary,
 		generatedAtMs: nowMs
 	});
@@ -258,6 +327,15 @@ export function diffReports(prev, curr) {
 		const p = prev.scripts?.[k]?.status ?? 'unknown';
 		const c = curr.scripts?.[k]?.status ?? 'unknown';
 		if (p !== c) changes.push(`Script ${k}: ${p} → ${c}`);
+	}
+	const allProbeKeys = new Set([...Object.keys(prev.probes ?? {}), ...Object.keys(curr.probes ?? {})]);
+	for (const k of allProbeKeys) {
+		// A probe absent from the prior report (e.g. first run after the
+		// probe was added) is treated as ok so its arrival alone doesn't
+		// page anyone; only a real ok→failed flip (or recovery) alerts.
+		const p = prev.probes?.[k]?.status ?? 'ok';
+		const c = curr.probes?.[k]?.status ?? 'ok';
+		if (p !== c) changes.push(`Probe ${k}: ${p} → ${c} (${curr.probes?.[k]?.reason ?? '—'})`);
 	}
 	return changes;
 }

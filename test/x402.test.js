@@ -85,10 +85,14 @@ describe('buildX402Config', () => {
 	});
 
 	test('rejects non-money, non-atomic price strings', () => {
+		// x402FeedPrice is the global per-route fallback, so a bad value
+		// trips assertPrice on the first route that falls back to it.
+		// Assert on the input + reason, not the (route-dependent) env-key
+		// name — the lead route can change without weakening this check.
 		expect(() => buildX402Config({
 			cfg: baseCfg({ x402FeedPrice: 'free' }),
 			env: {}
-		})).toThrow(/X402_FEED_PRICE.*atomic-unit integer|X402_FEED_PRICE.*\$<dollars>/);
+		})).toThrow(/=free must be.*atomic-unit integer/);
 	});
 
 	test('accepts atomic-unit price strings', () => {

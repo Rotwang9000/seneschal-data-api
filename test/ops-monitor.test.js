@@ -1,7 +1,10 @@
 // Tests for the ops-monitor watchdog helpers. Pure logic, no
 // systemd / no Telegram round-trip.
 
-import { describe, test, expect } from '@jest/globals';
+import { describe, test, expect, beforeAll, afterAll } from '@jest/globals';
+import { mkdtemp, writeFile, chmod, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 import {
 	parseShowOutput,
@@ -10,8 +13,10 @@ import {
 	buildReport,
 	diffReports,
 	renderTelegramMessage,
-	sendTelegram
+	sendTelegram,
+	runProbe
 } from '../src/ops-monitor.js';
+import { checkScript } from '../scripts/seneschal-ops-monitor.mjs';
 
 describe('parseShowOutput', () => {
 	test('parses well-formed systemctl show output', () => {
@@ -368,5 +373,182 @@ describe('sendTelegram', () => {
 		const out = await sendTelegram({ botToken: 'B', chatId: 'C', text: 'x', fetchImpl: stub });
 		expect(out.sent).toBe(false);
 		expect(out.reason).toMatch(/^network:refused/);
+	});
+});
+
+describe('checkScript (presence = exists + readable, NOT executable)', () => {
+	let dir;
+	beforeAll(async () => { dir = await mkdtemp(join(tmpdir(), 'ops-checkscript-')); });
+	afterAll(async () => { await rm(dir, { recursive: true, force: true }); });
+
+	// Regression for the false "DEGRADED · script(s) missing" alert:
+	// .mjs scripts run via `node script.mjs` need no +x bit, and rsync
+	// deploys drop it. checkScript must treat a readable, non-executable
+	// file as present.
+	test('readable, non-executable .mjs → ok', async () => {
+		const p = join(dir, 'income-poller.mjs');
+		await writeFile(p, '// poller\n');
+		await chmod(p, 0o644); // rw-r--r-- — no execute bit anywhere
+		const out = await checkScript(p);
+		expect(out.status).toBe('ok');
+		expect(out.sizeBytes).toBeGreaterThan(0);
+		expect(typeof out.mtimeMs).toBe('number');
+	});
+
+	test('executable script → ok too (does not regress the happy path)', async () => {
+		const p = join(dir, 'publish-docs.sh');
+		await writeFile(p, '#!/usr/bin/env bash\n');
+		await chmod(p, 0o755);
+		expect((await checkScript(p)).status).toBe('ok');
+	});
+
+	test('nonexistent path → missing', async () => {
+		const out = await checkScript(join(dir, 'does-not-exist.mjs'));
+		expect(out.status).toBe('missing');
+	});
+
+	test('directory (not a regular file) → missing', async () => {
+		const out = await checkScript(dir);
+		expect(out.status).toBe('missing');
+		expect(out.reason).toMatch(/regular file/);
+	});
+
+	test('unreadable file → missing (reason mentions readable)', async () => {
+		const p = join(dir, 'secret.mjs');
+		await writeFile(p, 'x');
+		await chmod(p, 0o000);
+		const out = await checkScript(p);
+		// root bypasses mode bits, so only assert the failure when the
+		// chmod actually removes our own read access.
+		if (process.getuid && process.getuid() === 0) {
+			expect(out.status).toBe('ok');
+		}
+		else {
+			expect(out.status).toBe('missing');
+			expect(out.reason).toMatch(/readable/);
+		}
+		await chmod(p, 0o644); // restore so afterAll cleanup can unlink
+	});
+});
+
+describe('runProbe (HTTP endpoint checks, stubbed fetch)', () => {
+	const fakeResponse = ({ status = 200, headers = {}, body = '' } = {}) => ({
+		status,
+		headers: { get: (k) => headers[k.toLowerCase()] ?? null },
+		text: async () => body
+	});
+
+	test('matching status + body substrings → ok', async () => {
+		const fetchImpl = async () => fakeResponse({ status: 200, body: '{"synchronized": true,"height":123}' });
+		const out = await runProbe(
+			{ name: 'monerod', url: 'http://127.0.0.1:18081/get_info', expectBodyIncludes: ['"synchronized": true'] },
+			{ fetchImpl }
+		);
+		expect(out.status).toBe('ok');
+		expect(out.httpStatus).toBe(200);
+	});
+
+	test('unexpected status → failed with both codes in the reason', async () => {
+		const fetchImpl = async () => fakeResponse({ status: 502 });
+		const out = await runProbe({ name: 'nfpt', url: 'http://x/health' }, { fetchImpl });
+		expect(out.status).toBe('failed');
+		expect(out.reason).toMatch(/http 502 \(expected 200\)/);
+	});
+
+	test('non-200 expectStatus supported (paywall 402 challenge)', async () => {
+		const fetchImpl = async () => fakeResponse({ status: 402, headers: { 'payment-required': 'eyJ4NDAy…' } });
+		const out = await runProbe(
+			{ name: 'paywall', url: 'https://api/x', expectStatus: 402, expectHeader: 'payment-required' },
+			{ fetchImpl }
+		);
+		expect(out.status).toBe('ok');
+	});
+
+	test('missing expected header → failed (catches silently-disabled paywall)', async () => {
+		const fetchImpl = async () => fakeResponse({ status: 402 });
+		const out = await runProbe(
+			{ name: 'paywall', url: 'https://api/x', expectStatus: 402, expectHeader: 'payment-required' },
+			{ fetchImpl }
+		);
+		expect(out.status).toBe('failed');
+		expect(out.reason).toMatch(/payment-required/);
+	});
+
+	test('missing body substring → failed (e.g. monerod up but not synced)', async () => {
+		const fetchImpl = async () => fakeResponse({ status: 200, body: '{"synchronized": false}' });
+		const out = await runProbe(
+			{ name: 'monerod', url: 'http://x', expectBodyIncludes: ['"synchronized": true'] },
+			{ fetchImpl }
+		);
+		expect(out.status).toBe('failed');
+		expect(out.reason).toMatch(/synchronized/);
+	});
+
+	test('network error → failed with network reason (tunnel down = ECONNREFUSED)', async () => {
+		const fetchImpl = async () => { throw Object.assign(new Error('fetch failed'), { cause: { code: 'ECONNREFUSED' } }); };
+		const out = await runProbe({ name: 'tunnel', url: 'http://127.0.0.1:18081/get_info' }, { fetchImpl });
+		expect(out.status).toBe('failed');
+		expect(out.reason).toMatch(/ECONNREFUSED/);
+	});
+
+	test('POST body is sent as JSON (zebra JSON-RPC probe)', async () => {
+		let seenInit = null;
+		const fetchImpl = async (url, init) => { seenInit = init; return fakeResponse({ status: 200, body: '{"result":{}}' }); };
+		const out = await runProbe(
+			{ name: 'zebra', url: 'http://x', method: 'POST', body: '{"method":"getblockchaininfo"}', expectBodyIncludes: ['"result"'] },
+			{ fetchImpl }
+		);
+		expect(out.status).toBe('ok');
+		expect(seenInit.method).toBe('POST');
+		expect(seenInit.headers['content-type']).toBe('application/json');
+		expect(seenInit.body).toBe('{"method":"getblockchaininfo"}');
+	});
+});
+
+describe('buildReport + diffReports with probes', () => {
+	const NOW = 1_779_605_000_000;
+
+	test('failing probe degrades the report and names the probe', () => {
+		const r = buildReport({
+			units: { a: { status: 'ok' } },
+			scripts: {},
+			probes: { 'tunnel-monerod': { status: 'failed', reason: 'network: ECONNREFUSED' } },
+			nowMs: NOW
+		});
+		expect(r.overall).toBe('degraded');
+		expect(r.summary).toMatch(/1 probe\(s\) failing \(tunnel-monerod\)/);
+	});
+
+	test('all probes green keeps overall=ok and counts them', () => {
+		const r = buildReport({
+			units: {},
+			scripts: {},
+			probes: { p1: { status: 'ok' }, p2: { status: 'ok' } },
+			nowMs: NOW
+		});
+		expect(r.overall).toBe('ok');
+		expect(r.summary).toMatch(/2 probes/);
+	});
+
+	test('probe ok→failed produces a change line; new probe arriving green does not', () => {
+		const prev = buildReport({ units: {}, scripts: {}, probes: { p1: { status: 'ok' } }, nowMs: NOW });
+		const curr = buildReport({
+			units: {},
+			scripts: {},
+			probes: { p1: { status: 'failed', reason: 'timeout after 8000ms' }, pNew: { status: 'ok' } },
+			nowMs: NOW + 60_000
+		});
+		const changes = diffReports(prev, curr);
+		expect(changes.some((c) => c.includes('Probe p1: ok → failed'))).toBe(true);
+		expect(changes.some((c) => c.includes('pNew'))).toBe(false);
+	});
+
+	test('probe recovery (failed→ok) also alerts', () => {
+		const prev = buildReport({ units: {}, scripts: {}, probes: { p1: { status: 'failed', reason: 'x' } }, nowMs: NOW });
+		const curr = buildReport({ units: {}, scripts: {}, probes: { p1: { status: 'ok', reason: 'http 200 in 12ms' } }, nowMs: NOW + 60_000 });
+		const changes = diffReports(prev, curr);
+		expect(changes.some((c) => c.includes('Probe p1: failed → ok'))).toBe(true);
+		// Overall flips degraded→ok too.
+		expect(changes.some((c) => c.includes('Overall: degraded → ok'))).toBe(true);
 	});
 });

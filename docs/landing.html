@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Seneschal — Private Watch + Ethereum block builder</title>
-<meta name="description" content="Get a webhook the moment a Monero or Zcash payment lands at your address, using only the (read-only) view key. $0.02/day idle + $0.005/webhook delivered via x402 USDC on Base. Plus an Ethereum mainnet block builder and free liquidation telemetry.">
+<meta name="description" content="Get a webhook the moment a Monero or Zcash payment lands at your address, using only the (read-only) view key. $0.02/day idle + $0.005/webhook, paid in x402 USDC on Base — or fund your watch by paying in XMR/ZEC directly. Plus an Ethereum mainnet block builder and free liquidation telemetry.">
 <link rel="canonical" href="https://seneschal.space/">
 <meta property="og:type" content="website">
 <meta property="og:site_name" content="Seneschal">
@@ -105,12 +105,54 @@ figure.flow figcaption { font-size: 0.85em; color: var(--muted); margin: 0.4em 0
 .facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 0.6em 1.4em; margin: 1em 0 0; padding: 0; list-style: none; font-size: 0.95em }
 .facts li { margin: 0 }
 .facts strong { display: block; color: #fff; font-size: 0.85em; text-transform: uppercase; letter-spacing: 0.03em; font-weight: 600; opacity: 0.85 }
+
+/* Orientation: lead sentence + at-a-glance service map -------------- */
+.lead { font-size: 1.14em; line-height: 1.5; margin: 0.45em 0 0.4em; color: #1c1c1c }
+.lead strong { font-weight: 600 }
+.glance-label { font-size: 0.8em; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); margin: 1.3em 0 0.5em; font-weight: 600 }
+.glance { display: grid; grid-template-columns: repeat(auto-fit, minmax(232px, 1fr)); gap: 0.7em; margin: 0 0 1.4em; padding: 0 }
+.glance a { display: block; text-decoration: none; color: inherit; background: var(--soft); border: 1px solid var(--card-border); border-radius: 8px; padding: 0.7em 0.85em 0.75em; transition: background .12s, border-color .12s, transform .12s }
+.glance a:hover { background: var(--soft-2); border-color: var(--brand); transform: translateY(-1px) }
+.glance .g-name { font-weight: 600; color: var(--brand); font-size: 0.98em; display: flex; align-items: center; gap: 0.4em }
+.glance .g-name .tag { margin-left: auto; font-size: 0.66em; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; color: #fff; background: var(--accent); padding: 1px 7px; border-radius: 10px }
+.glance .g-desc { display: block; font-size: 0.86em; color: #3a3a3a; margin: 0.35em 0 0; line-height: 1.4 }
+.glance .g-for { display: block; font-size: 0.78em; color: var(--muted); margin: 0.45em 0 0 }
+.glance .g-for b { color: #333; font-weight: 600 }
 </style>
 
 <h1>Seneschal</h1>
-<p class=muted>Ethereum mainnet block builder &amp; pay-per-call data services. <code>extra_data = Seneschal/0.1</code>.</p>
+<p class="lead">An independent <strong>Ethereum mainnet block builder</strong> that turns its own node, privacy-coin scanners and on-chain rails into <strong>pay-per-call services</strong>. <strong>No account, no API key, no subscription</strong> — you pay a few cents in USDC on Base (or in Monero/Zcash) only for what you actually use.</p>
 
-<section class="hero">
+<p class="glance-label">What you can do here</p>
+<nav class="glance" aria-label="Seneschal services overview">
+	<a href="#private-watch">
+		<span class="g-name">Private Watch <span class="tag">Flagship</span></span>
+		<span class="g-desc">Get a webhook the instant a Monero or Zcash payment lands at your address — from a read-only view key, no node to run.</span>
+		<span class="g-for"><b>For</b> merchants, wallets &amp; payment bots</span>
+	</a>
+	<a href="#builder">
+		<span class="g-name">Block builder</span>
+		<span class="g-desc">Send bundles to a permissionless mainnet builder bidding into six relays. No registration.</span>
+		<span class="g-for"><b>For</b> searchers &amp; MEV matchmakers</span>
+	</a>
+	<a href="#data">
+		<span class="g-name">Liquidation &amp; builder data</span>
+		<span class="g-desc">Free REST telemetry: loans near liquidation across Aave / Morpho / Spark / Compound, plus builder market share.</span>
+		<span class="g-for"><b>For</b> liquidators, analysts &amp; dashboards</span>
+	</a>
+	<a href="#paymaster">
+		<span class="g-name">Stablecoin gas paymaster</span>
+		<span class="g-desc">ERC-4337 paymaster on Base — let smart accounts pay gas in USDC, EURC, USDT, DAI or cbBTC instead of ETH.</span>
+		<span class="g-for"><b>For</b> wallet &amp; smart-account developers</span>
+	</a>
+	<a href="#premium">
+		<span class="g-name">Penny Oracle &amp; x402 APIs</span>
+		<span class="g-desc">Single-fact DeFi &amp; privacy-chain data endpoints from $0.001, paid per call in USDC via x402.</span>
+		<span class="g-for"><b>For</b> AI agents &amp; automated systems</span>
+	</a>
+</nav>
+
+<section class="hero" id="private-watch">
 <h2>Private Watch — get pinged when a Monero or Zcash payment lands</h2>
 <p>Hand us a <em>view key</em> (read-only — it cannot spend), an address, and a webhook URL. We POST you an HMAC-signed notification the moment funds arrive. <strong>Prepaid credit meter: $0.02/day idle + $0.005/webhook delivered, top up any time.</strong> No node, no subscription, no API key, no account.</p>
 
@@ -157,8 +199,8 @@ figure.flow figcaption { font-size: 0.85em; color: var(--muted); margin: 0.4em 0
 			</svg>
 			<h4>Top up credit</h4>
 		</div>
-		<p class="tile-price"><strong>$0.10 / $1.00 / $5.00</strong> · x402 tiers</p>
-		<p><code>POST /v1/private/topup{,-1,-5}</code><br>$1 buys ~50 idle days; $5 buys ~250. The <code>low_credit</code> webhook tells you when to top up.</p>
+		<p class="tile-price"><strong>USDC (x402) or XMR/ZEC</strong> · any amount</p>
+		<p><code>POST /v1/private/topup{,-1,-5,-custom}</code> in USDC ($1 buys ~50 idle days), or <strong>pay in Monero/Zcash</strong> via <code>POST /v1/private/topup-crypto</code> — a free quote locks a rate; we detect your coin payment with the same view-key scanner this product runs on. The <code>low_credit</code> webhook tells you when to top up.</p>
 	</div>
 
 	<!-- Historical -->
@@ -384,11 +426,12 @@ figure.flow figcaption { font-size: 0.85em; color: var(--muted); margin: 0.4em 0
 })();
 </script>
 
-<h2>Permissionless Ethereum block builder</h2>
+<h2 id="builder">Permissionless Ethereum block builder</h2>
 <p>
 Independent block builder running an rbuilder fork from a single
 co-located node in Helsinki. Bidding into Aestus, Agnostic, ETHGas,
-Flashbots, Titan and Ultrasound mainnet relays.
+Flashbots, Titan and Ultrasound mainnet relays. Blocks we land carry
+<code>extra_data = Seneschal/0.1</code>.
 </p>
 <h3>For searchers &amp; matchmakers</h3>
 <p>
@@ -398,7 +441,7 @@ registration required. Commits to the Flashbots
 <a href="https://github.com/flashbots/dowg/blob/main/fair-market-principles.md">Fair Market Principles</a>.
 </p>
 
-<h2>Free liquidation &amp; builder data</h2>
+<h2 id="data">Free liquidation &amp; builder data</h2>
 <p>
 No-signup REST API exposing cross-protocol liquidation telemetry our
 bot already collects &mdash; positions near liquidation across Aave,
@@ -413,7 +456,7 @@ ground-truth builder market share.
 <a href="https://mcp.seneschal.space/health">MCP <code>/health</code></a>
 </div>
 
-<h2>For smart accounts: pay gas in stablecoins on Base</h2>
+<h2 id="paymaster">For smart accounts: pay gas in stablecoins on Base</h2>
 <p>
 ERC-4337 v0.7 paymaster on Base mainnet. Stop holding ETH in every
 smart account &mdash; pay gas in <code>USDC</code>, <code>EURC</code>,
@@ -427,7 +470,7 @@ Sourcify, smoke-tested via Pimlico, MIT-licensed.
 <a href="https://github.com/Rotwang9000/seneschal-paymaster">GitHub</a>
 </div>
 
-<h2>Other premium endpoints (x402 micropayments)</h2>
+<h2 id="premium">Other premium endpoints (x402 micropayments)</h2>
 <p>
 Pay-per-call endpoints on Base mainnet, settled in USDC via the x402
 protocol &mdash; no API keys, no subscriptions, no gas for the payer

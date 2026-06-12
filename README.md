@@ -22,6 +22,19 @@ API key):
   per-builder bid distributions, and Penny Oracle atomic single-fact
   endpoints (DeFi + Monero/Zcash) from $0.001/call.
 
+Watches can also be topped up **natively in XMR or ZEC** (we quote an
+amount, you pay on-chain, our view-key scanner credits the watch — no
+bridge, no custodian). All paid routes carry the
+[x402 Bazaar](https://docs.cdp.coinbase.com/x402/bazaar) discovery
+extension and settle through the Coinbase CDP facilitator, so agents can
+find and pay them via CDP discovery search, Agentic.Market and
+[x402.eco](https://x402.eco) without any pre-baked integration.
+
+The payment engine itself (x402 paywall, view-key watching, credit
+meters, MCP tools) is the open-source, brand-neutral
+[payments-gateway](https://github.com/Rotwang9000/payments-gateway) —
+embed it to charge for your own services.
+
 ## Live endpoints
 
 | What                          | URL                              | Auth     |

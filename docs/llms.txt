@@ -1,13 +1,14 @@
 # Seneschal
 
-> View-key payment webhooks for Monero and Zcash, plus an Ethereum mainnet block builder and free DeFi-liquidation telemetry. Pay-per-call in USDC via the x402 standard; free read tier; an MCP server for AI agents (no API key).
+> View-key payment webhooks for Monero and Zcash, plus an Ethereum mainnet block builder and free DeFi-liquidation telemetry. Pay-per-call in USDC via the x402 standard — or fund a watch directly in Monero/Zcash. Free read tier; an MCP server for AI agents (no API key).
 
 Seneschal lets a receiver get an HMAC-signed webhook the instant a Monero (XMR) or Zcash (ZEC) payment lands at their address, using only a read-only *view key* — no node to run, no custody (view keys cannot spend). Premium endpoints are paid per call in USDC on Base via the x402 protocol; many read endpoints are free.
 
 ## Private Watch — Monero / Zcash payment webhooks (headline product)
 - Docs & quickstart: https://docs.seneschal.space/
 - Create a watch: POST https://api.seneschal.space/v1/private/watch (x402, $0.10 seeds credit) — body { chain, address, viewKey, webhookUrl }. Returns a webhookSecret; verify deliveries with HMAC-SHA256.
-- Top up credit: POST https://api.seneschal.space/v1/private/topup | /topup-1 | /topup-5
+- Top up credit (USDC via x402): POST https://api.seneschal.space/v1/private/topup | /topup-1 | /topup-5 | /topup-custom
+- Top up credit by paying in Monero/Zcash (FREE to quote, no x402, no key): POST https://api.seneschal.space/v1/private/topup-crypto — body { watchId, watchToken, chain, amountUsdCents }. Returns a receiving address, the exact coin amount (Monero: a unique-amount invoice tag; Zcash: a memo) and a USD rate locked for a short window. Poll GET https://api.seneschal.space/v1/private/topup-crypto/{quoteId} (header x-watch-token) until status=settled. We detect the payment with the same view-key scanner the product sells — we never hold a spend key.
 - One-off historical scan: POST https://api.seneschal.space/v1/private/historical (x402)
 - Free UFVK derivation from a seed phrase (rate-limited): POST https://api.seneschal.space/v1/private/derive-viewkey
 
@@ -19,12 +20,16 @@ Seneschal lets a receiver get an HMAC-signed webhook the instant a Monero (XMR) 
 - WalletConnect control panel: https://panel.seneschal.space/
 
 ## Pricing
-- Private Watch: $0.02 per idle day + $0.005 per webhook delivered; creation seeds $0.10 credit; top-ups of $0.10 / $1 / $5.
+- Private Watch: $0.02 per idle day + $0.005 per webhook delivered; creation seeds $0.10 credit; top-ups of $0.10 / $1 / $5 (or any amount $0.10–$25 via /topup-custom).
+- Pay-in-coin top-ups: fund a watch in XMR/ZEC, $2–$500 per quote, credited at a rate locked for the quote window (small spread covers volatility).
 - Atomic "single-fact" endpoints (Monero/Zcash chain facts; DeFi facts): about $0.001 each, ideal for agent loops.
 
 ## Free / public (no key)
 - DeFi liquidation telemetry for Aave, Morpho, Spark and Compound on Ethereum mainnet.
 - Ethereum block-builder market-share data from the Seneschal shadow recorder.
+
+## Background / writing
+- The Zcash Orchard bug (2026-06) and why view-key payment monitoring is unaffected: https://docs.seneschal.space/orchard-bug-view-keys.html — explains the non-canonical-proof soundness bug (supply, not privacy), the Zebra 5.0.0 / NU6.2 fix, the analogous Monero bug class (2017 key-image, Bulletproofs audit), and why read-only view-key payment detection (Private Watch) keeps working.
 
 ## Contact & policies
 - Telegram: https://t.me/OrknetP

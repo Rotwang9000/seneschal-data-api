@@ -16,7 +16,8 @@ import {
 	cancelOrchardJob,
 	healthCheck,
 	normaliseMonero,
-	normaliseOrchard
+	normaliseOrchard,
+	scanHistorical
 } from '../src/private-watch-nfpt.js';
 
 function fetchOk(body, status = 200) {
@@ -191,6 +192,72 @@ describe('cancelOrchardJob', () => {
 	test('returns cancelled:true on 200', async () => {
 		const c = createNfptClient({ baseUrl: 'http://nfpt', apiKey: 'k', fetchImpl: fetchStatus(200, { success: true }) });
 		expect(await cancelOrchardJob(c, { jobId: 'J' })).toEqual({ cancelled: true });
+	});
+});
+
+describe('scanHistorical completion (Orchard succeeded status)', () => {
+	test('breaks the poll loop on status "succeeded" without scanProgress', async () => {
+		// Orchard's terminal status is 'succeeded' and the job carries no
+		// fractional scanProgress, so the loop must key off the status. A
+		// regression here would spin until maxWaitMs.
+		const succeededJob = {
+			jobId: 'J',
+			status: 'succeeded',
+			progress: { scannedToHeight: 3_500_000, chainTip: 3_500_000 },
+			results: {
+				notes: [
+					{ value: '100' },
+					{ value: '50' },
+					{ value: '70', spent: true }
+				]
+			}
+		};
+		let getCount = 0;
+		const cap = captureFetch((_url, init) => {
+			if (init.method === 'POST') {
+				return { status: 202, text: async () => JSON.stringify({ data: { jobId: 'J', jobToken: 'T' } }) };
+			}
+			if (init.method === 'DELETE') {
+				return { status: 200, text: async () => JSON.stringify({ success: true }) };
+			}
+			getCount += 1;
+			const job = getCount === 1
+				? { jobId: 'J', status: 'running', progress: {}, results: { notes: [] } }
+				: succeededJob;
+			return { status: 200, text: async () => JSON.stringify({ data: { job } }) };
+		});
+		const c = createNfptClient({ baseUrl: 'http://nfpt', apiKey: 'k', fetchImpl: cap.fetch });
+
+		const res = await scanHistorical(c, {
+			chain: 'zcash',
+			viewKey: 'uview1...',
+			includeNotes: true,
+			pollIntervalMs: 5,
+			maxWaitMs: 2_000
+		});
+
+		expect(res.chain).toBe('zcash');
+		expect(res.totals.received_atomic).toBe('220');
+		expect(res.totals.spent_atomic).toBe('70');
+		expect(res.totals.balance_atomic).toBe('150');
+		expect(res.notes).toHaveLength(3);
+		// Completion must come from the status, not from exhausting the
+		// budget: 1 running poll + 1 succeeded poll + 1 raw fetch.
+		const getCalls = cap.calls.filter((x) => x.init.method === 'GET').length;
+		expect(getCalls).toBeLessThanOrEqual(3);
+	});
+
+	test('throws when the job ends in a terminal failure state', async () => {
+		const cap = captureFetch((_url, init) => {
+			if (init.method === 'POST') {
+				return { status: 202, text: async () => JSON.stringify({ data: { jobId: 'J', jobToken: 'T' } }) };
+			}
+			return { status: 200, text: async () => JSON.stringify({ data: { job: { jobId: 'J', status: 'cancelled', progress: {}, results: { notes: [] } } } }) };
+		});
+		const c = createNfptClient({ baseUrl: 'http://nfpt', apiKey: 'k', fetchImpl: cap.fetch });
+		await expect(scanHistorical(c, {
+			chain: 'zcash', viewKey: 'uview1...', pollIntervalMs: 5, maxWaitMs: 2_000
+		})).rejects.toThrow(/cancelled/);
 	});
 });
 
