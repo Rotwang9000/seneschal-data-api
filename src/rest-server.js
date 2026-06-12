@@ -632,6 +632,29 @@ export async function buildApp(options = {}) {
 		return reply.send(faviconCache);
 	});
 
+	// `/llms.txt` — the llmstxt.org convention agent crawlers fetch from
+	// the API origin (the docs site serves its own copy, but indexers
+	// that found us via openapi.json look here, not on the docs host).
+	// Same lazy-load-and-cache pattern as the favicon.
+	let llmsTxtCache;
+	app.get('/llms.txt', async (req, reply) => {
+		if (llmsTxtCache === undefined) {
+			try {
+				llmsTxtCache = await readFile(new URL('../docs/llms.txt', import.meta.url), 'utf8');
+			}
+			catch {
+				llmsTxtCache = null;
+			}
+		}
+		if (!llmsTxtCache) {
+			reply.code(404);
+			return { error: { code: 'not_found', message: 'no llms.txt' } };
+		}
+		reply.header('content-type', 'text/plain; charset=utf-8');
+		reply.header('cache-control', 'public, max-age=3600');
+		return reply.send(llmsTxtCache);
+	});
+
 	// `/.well-known/x402` — opt-in discovery manifest matching the
 	// emerging convention that x402 service-discovery agents (e.g.
 	// Agorion, coinbase/x402 #1379) scrape from a provider's apex

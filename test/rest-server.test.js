@@ -109,6 +109,22 @@ describe('routing & shape', () => {
 		expect(r.statusCode).toBe(404);
 		expect(r.json().error.code).toBe('not_found');
 	});
+
+	// Agent crawlers fetch these from the API origin (not the docs
+	// host); a 404 here loses the listing.
+	test('GET /llms.txt serves the agent-facing service summary', async () => {
+		const r = await call('GET', '/llms.txt');
+		expect(r.statusCode).toBe(200);
+		expect(r.headers['content-type']).toMatch(/text\/plain/);
+		expect(r.body).toMatch(/Seneschal/);
+		expect(r.body).toMatch(/openapi\.json/);
+	});
+
+	test('GET /favicon.ico serves an icon', async () => {
+		const r = await call('GET', '/favicon.ico');
+		expect(r.statusCode).toBe(200);
+		expect(r.headers['content-type']).toMatch(/image\/x-icon/);
+	});
 });
 
 describe('/v1/ops/health (watchdog state surface)', () => {

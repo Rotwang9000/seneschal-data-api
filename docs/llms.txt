@@ -13,6 +13,7 @@ Seneschal lets a receiver get an HMAC-signed webhook the instant a Monero (XMR) 
 - Free UFVK derivation from a seed phrase (rate-limited): POST https://api.seneschal.space/v1/private/derive-viewkey
 
 ## API discovery
+- OpenAPI 3.1 document (all routes, x402 prices per route): https://api.seneschal.space/openapi.json
 - x402 payment manifest: https://api.seneschal.space/.well-known/x402
 - Health + table sizes: https://api.seneschal.space/v1/health
 - MCP server (Streamable HTTP transport): https://mcp.seneschal.space/
